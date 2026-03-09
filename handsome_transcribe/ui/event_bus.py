@@ -272,3 +272,21 @@ class EventBus(QObject):
             error_msg: Error message
         """
         self.autosave_error.emit(error_msg)
+    
+    def emit_summarization_complete(self, summary: Any):
+        """
+        Emit summarization complete event.
+        
+        Args:
+            summary: MeetingSummary object
+        """
+        self.summarization_complete.emit(summary)
+    
+    def emit_reports_ready(self, reports: Dict[str, str]):
+        """
+        Emit reports ready event.
+        
+        Args:
+            reports: Dictionary mapping format names to file paths
+        """
+        self.reports_ready.emit(reports)

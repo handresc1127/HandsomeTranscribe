@@ -10,7 +10,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
-from PySide6.QtCore import QObject, QTimer, QThreadPool
+from PySide6.QtCore import QObject, QTimer, QThreadPool, Qt
 
 from .models import SessionData, SessionConfig, SessionState, TranscriptSegmentData
 from .database import Database
@@ -431,7 +431,7 @@ class SessionManager(QObject):
         )
         
         # Connect transcription complete -> next stage
-        # (In full implementation, would connect signals here)
+        self.event_bus.transcription_complete.connect(self._on_transcription_complete, Qt.ConnectionType.QueuedConnection)
         
         self._thread_pool.start(self.transcriber_worker)
     
@@ -458,13 +458,16 @@ class SessionManager(QObject):
             hf_token=self.config.hf_token
         )
         
+        # Connect diarization complete -> next stage
+        self.event_bus.speaker_update_ready.connect(self._on_diarization_complete, Qt.ConnectionType.QueuedConnection)
+        
         self._thread_pool.start(diarizer_worker)
     
     def _start_summarization(self):
         """Start summarization worker if enabled."""
         if not self.current_session or not self.config.habilitar_resumen:
-            # Skip to completion
-            self._complete_session()
+            # Skip to reporting
+            self._start_reporting()
             return
         
         self._transition_state(SessionState.SUMMARIZING)
@@ -475,6 +478,9 @@ class SessionManager(QObject):
             output_path=self.current_session.summary_path,
             use_transformers=True
         )
+        
+        # Connect summarization complete -> next stage
+        self.event_bus.summarization_complete.connect(self._on_summarization_complete, Qt.ConnectionType.QueuedConnection)
         
         self._thread_pool.start(summarizer_worker)
     
@@ -489,6 +495,9 @@ class SessionManager(QObject):
             session_id=self.current_session.id,
             reports_dir=REPORTS_DIR
         )
+        
+        # Connect reports ready -> completion
+        self.event_bus.reports_ready.connect(self._on_reports_ready, Qt.ConnectionType.QueuedConnection)
         
         self._thread_pool.start(reporter_worker)
     
@@ -513,3 +522,71 @@ class SessionManager(QObject):
         # Reset for next session
         self.current_session = None
         self._transition_state(SessionState.IDLE)
+    
+    # -------------------------------------------------------------------------
+    # Worker completion callbacks
+    # -------------------------------------------------------------------------
+    
+    def _on_transcription_complete(self, transcript):
+        """
+        Handle transcription completion and move to next stage.
+        
+        Args:
+            transcript: Whisper transcript result
+        """
+        # Disconnect signal to avoid duplicate calls
+        try:
+            self.event_bus.transcription_complete.disconnect(self._on_transcription_complete)
+        except RuntimeError:
+            pass  # Already disconnected
+        
+        # Move to next stage: diarization if enabled, else summarization
+        self._start_diarization()
+    
+    def _on_diarization_complete(self, speaker_map):
+        """
+        Handle diarization completion and move to next stage.
+        
+        Args:
+            speaker_map: Speaker identification map
+        """
+        # Disconnect signal
+        try:
+            self.event_bus.speaker_update_ready.disconnect(self._on_diarization_complete)
+        except RuntimeError:
+            pass
+        
+        # Move to summarization
+        self._start_summarization()
+    
+    def _on_summarization_complete(self, summary):
+        """
+        Handle summarization completion and move to next stage.
+        
+        Args:
+            summary: MeetingSummary object
+        """
+        # Disconnect signal
+        try:
+            self.event_bus.summarization_complete.disconnect(self._on_summarization_complete)
+        except RuntimeError:
+            pass
+        
+        # Move to reporting
+        self._start_reporting()
+    
+    def _on_reports_ready(self, reports):
+        """
+        Handle report generation completion and complete session.
+        
+        Args:
+            reports: Dict of generated report paths
+        """
+        # Disconnect signal
+        try:
+            self.event_bus.reports_ready.disconnect(self._on_reports_ready)
+        except RuntimeError:
+            pass
+        
+        # Complete session
+        self._complete_session()

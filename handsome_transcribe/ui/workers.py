@@ -449,62 +449,99 @@ class SummarizerWorker(QRunnable):
         
         Args:
             event_bus: EventBus for emitting signals
-            transcript_path: Path to transcript file
-            output_path: Path to save summary
+            transcript_path: Path to transcript file (.txt, will read .json)
+            output_path: Path to save summary markdown
             use_transformers: Whether to use transformers (abstractive) or extractive
         """
         super().__init__()
         self.event_bus = event_bus
-        self.transcript_path = transcript_path
+        # Use JSON transcript for structured data
+        self.transcript_json_path = transcript_path.with_suffix('.json')
         self.output_path = output_path
         self.use_transformers = use_transformers
     
     def run(self):
         """Execute summarization in background thread."""
         try:
-            # Read transcript
-            with open(self.transcript_path, "r", encoding="utf-8") as f:
-                transcript_text = f.read()
+            import json
+            from handsome_transcribe.summarization.meeting_summarizer import MeetingSummarizer
+            from handsome_transcribe.transcription.whisper_transcriber import Transcript, TranscriptSegment
+            
+            self.event_bus.emit_stage_progress("Summarizing", 25)
+            
+            # Load transcript from JSON
+            with open(self.transcript_json_path, "r", encoding="utf-8") as f:
+                transcript_data = json.load(f)
+            
+            # Construct Transcript object
+            segments = [
+                TranscriptSegment(
+                    start=seg["start"],
+                    end=seg["end"],
+                    text=seg["text"],
+                    speaker=seg.get("speaker", "Unknown")
+                )
+                for seg in transcript_data["segments"]
+            ]
+            transcript = Transcript(
+                audio_file=transcript_data["audio_file"],
+                language=transcript_data["language"],
+                segments=segments
+            )
             
             self.event_bus.emit_stage_progress("Summarizing", 50)
             
-            # Generate summary (placeholder - integrate with actual summarizer)
-            summary = self._generate_placeholder_summary(transcript_text)
+            # Run summarization with MeetingSummarizer
+            summarizer = MeetingSummarizer(use_transformers=self.use_transformers)
+            summary = summarizer.summarize(transcript)
+            
+            self.event_bus.emit_stage_progress("Summarizing", 75)
+            
+            # Format summary as markdown
+            markdown_content = self._format_summary_markdown(summary)
             
             # Save summary
             with open(self.output_path, "w", encoding="utf-8") as f:
-                f.write(summary)
+                f.write(markdown_content)
             
             self.event_bus.emit_stage_progress("Summarizing", 100)
-            # self.event_bus.emit_summarization_complete(summary_obj)
+            # Emit completion signal with summary object
+            self.event_bus.emit_summarization_complete(summary)
         
         except Exception as e:
             self.event_bus.emit_session_error(f"Summarization failed: {str(e)}", "summarization")
     
-    def _generate_placeholder_summary(self, text: str) -> str:
+    def _format_summary_markdown(self, summary) -> str:
         """
-        Generate placeholder summary.
-        
-        TODO: Integrate with actual MeetingSummarizer from handsome_transcribe.summarization
+        Format MeetingSummary object as markdown.
         
         Args:
-            text: Transcript text
+            summary: MeetingSummary object
             
         Returns:
-            Summary text in markdown format
+            Markdown formatted summary
         """
-        return f"""# Meeting Summary
-
-## Overview
-This is a placeholder summary.
-
-## Key Points
-- Point 1
-- Point 2
-
-## Transcript
-{text[:500]}...
-"""
+        lines = ["# Meeting Summary", "", summary.summary, ""]
+        
+        if summary.key_topics:
+            lines.append("## Key Topics")
+            for topic in summary.key_topics:
+                lines.append(f"- {topic}")
+            lines.append("")
+        
+        if summary.action_items:
+            lines.append("## Action Items")
+            for item in summary.action_items:
+                lines.append(f"- {item}")
+            lines.append("")
+        
+        if summary.decisions:
+            lines.append("## Decisions")
+            for decision in summary.decisions:
+                lines.append(f"- {decision}")
+            lines.append("")
+        
+        return "\n".join(lines)
 
 
 class ReporterWorker(QRunnable):
@@ -539,40 +576,107 @@ class ReporterWorker(QRunnable):
     def run(self):
         """Execute report generation in background thread."""
         try:
-            reports = {}
+            import json
+            from handsome_transcribe.reporting.report_generator import ReportGenerator
+            from handsome_transcribe.summarization.meeting_summarizer import MeetingSummary
+            from handsome_transcribe.transcription.whisper_transcriber import Transcript, TranscriptSegment
             
-            # Generate Markdown report
-            self.event_bus.emit_stage_progress("Generating reports", 33)
-            md_path = self.reports_dir / f"session_{self.session_id}_report.md"
-            self._generate_markdown_report(md_path)
-            reports["markdown"] = md_path
+            self.event_bus.emit_stage_progress("Generating reports", 20)
             
-            # Generate JSON report
-            self.event_bus.emit_stage_progress("Generating reports", 66)
-            json_path = self.reports_dir / f"session_{self.session_id}_report.json"
-            self._generate_json_report(json_path)
-            reports["json"] = json_path
+            # Load transcript from JSON
+            transcript_json = self.session_dir / "transcript.json"
+            with open(transcript_json, "r", encoding="utf-8") as f:
+                transcript_data = json.load(f)
             
-            # Generate PDF report (placeholder)
+            segments = [
+                TranscriptSegment(
+                    start=seg["start"],
+                    end=seg["end"],
+                    text=seg["text"],
+                    speaker=seg.get("speaker", "Unknown")
+                )
+                for seg in transcript_data["segments"]
+            ]
+            transcript = Transcript(
+                audio_file=transcript_data["audio_file"],
+                language=transcript_data["language"],
+                segments=segments
+            )
+            
+            self.event_bus.emit_stage_progress("Generating reports", 40)
+            
+            # Load summary from markdown (parse back to MeetingSummary)
+            summary_md = self.session_dir / "summary.md"
+            summary = self._parse_summary_markdown(summary_md)
+            
+            self.event_bus.emit_stage_progress("Generating reports", 60)
+            
+            # Generate reports using ReportGenerator
+            generator = ReportGenerator(output_dir=self.reports_dir)
+            title = f"Session {self.session_id}"
+            
+            reports = generator.generate(
+                transcript=transcript,
+                summary=summary,
+                title=title,
+                formats=["markdown", "json", "pdf"]
+            )
+            
             self.event_bus.emit_stage_progress("Generating reports", 100)
-            pdf_path = self.reports_dir / f"session_{self.session_id}_report.pdf"
-            # TODO: Integrate with actual ReportGenerator
-            reports["pdf"] = pdf_path
             
-            # Emit completion
-            # self.event_bus.reports_ready.emit(reports)
+            # Emit completion with report paths
+            self.event_bus.emit_reports_ready(reports)
         
         except Exception as e:
             self.event_bus.emit_session_error(f"Report generation failed: {str(e)}", "reporting")
     
-    def _generate_markdown_report(self, output_path: Path):
-        """Generate markdown report (placeholder)."""
-        with open(output_path, "w", encoding="utf-8") as f:
-            f.write(f"# Session {self.session_id} Report\n\n")
-            f.write("Report generated.\n")
-    
-    def _generate_json_report(self, output_path: Path):
-        """Generate JSON report (placeholder)."""
-        import json
-        with open(output_path, "w", encoding="utf-8") as f:
-            json.dump({"session_id": self.session_id, "status": "complete"}, f, indent=2)
+    def _parse_summary_markdown(self, summary_path: Path):
+        """
+        Parse summary markdown back to MeetingSummary object.
+        
+        Args:
+            summary_path: Path to summary markdown file
+            
+        Returns:
+            MeetingSummary object
+        """
+        from handsome_transcribe.summarization.meeting_summarizer import MeetingSummary
+        
+        with open(summary_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        
+        # Parse markdown sections
+        lines = content.split("\n")
+        summary_text = ""
+        key_topics = []
+        action_items = []
+        decisions = []
+        
+        current_section = None
+        for line in lines:
+            line = line.strip()
+            if line.startswith("# Meeting Summary"):
+                continue
+            elif line.startswith("## Key Topics"):
+                current_section = "topics"
+            elif line.startswith("## Action Items"):
+                current_section = "actions"
+            elif line.startswith("## Decisions"):
+                current_section = "decisions"
+            elif line.startswith("- "):
+                item = line[2:]
+                if current_section == "topics":
+                    key_topics.append(item)
+                elif current_section == "actions":
+                    action_items.append(item)
+                elif current_section == "decisions":
+                    decisions.append(item)
+            elif line and current_section is None:
+                summary_text += line + " "
+        
+        return MeetingSummary(
+            summary=summary_text.strip(),
+            key_topics=key_topics,
+            action_items=action_items,
+            decisions=decisions
+        )
