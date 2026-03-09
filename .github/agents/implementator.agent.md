@@ -35,25 +35,119 @@ Si no se provee ruta, solicitarla.
 
 - Leer plan y detectar tareas ya marcadas como completadas.
 - Leer archivos de codigo y tests referenciados por el plan.
-- Crear lista de tareas de ejecucion.
+- Crear lista de tareas de ejecucion ordenada por fase.
+- **Actualizar plan**: agregar metadatos de inicio.
+
+```markdown
+## Ejecucion
+
+**Iniciada**: [fecha-hora]
+**Ejecutor**: implementator
+**Estado**: en-progreso
+```
 
 ### Paso 2: Implementacion por fases
 
-Para cada fase:
+Para cada fase del plan:
 
-1. Implementar cambios acotados.
-2. Ejecutar verificacion automatizada relevante.
-3. Corregir fallos antes de pasar a la siguiente fase.
-4. Actualizar progreso en el plan (checkboxes).
+1. **Antes de implementar**: 
+   - Actualizar plan: marcar fase como `[IN PROGRESS]`.
+   - Listar subtareas previstas.
+
+2. **Implementar cambios acotados**:
+   - Realizar solo cambios descritos en la fase.
+   - No refactorizar ni tocar codigo no relacionado.
+
+3. **Ejecutar verificacion automatizada relevante**:
+   - Correr `pytest` o test puntual por modulo.
+   - Validar sintaxis/imports en archivos modificados.
+
+4. **Procesar resultados**:
+   - Si pasan: **actualizar plan** marcando fase como `[DONE]` con resumen.
+   - Si fallan: **actualizar plan** con hallazgos bajo `## Hallazgos` y volver a paso 2 o pedir aclaracion.
+
+5. **Actualizar plan con evidencia**:
+   - Agregar archivos modificados.
+   - Agregar comandos ejecutados y resultados.
+   - Agregar cualquier riesgo o pendiente identificado.
 
 ### Paso 3: Verificacion final
 
-- Ejecutar pruebas de regresion razonables para el alcance.
+- Ejecutar pruebas de regresion para el alcance del plan.
 - Confirmar que no se rompio CLI ni formatos de salida.
-- Resumir pendientes/manual checks si aplica.
+- **Actualizar plan** con seccion de `## Verificacion final`:
+  - Comandos ejecutados.
+  -Actualizacion del plan (mientras se ejecuta)
 
-## Verificacion recomendada
+El plan NO es estatico. Se actualiza en tiempo real con:
 
+- **Checkboxes de fases**: `- [x] Fase N: descripcion`.
+- **Hallazgos encontrados**: cada problema va en seccion `## Hallazgos` con clasificacion.
+- **Cambios realizados**: lista de archivos modificados, lineas, razon.
+- **Verificacion**: resultados de comandos pytest/CLI.
+- **Riesgos identificados**: cualquier situacion inesperada.
+- **Pendientes**: tareas no cubiertas por el plan o requieren confirmacion.
+
+### Seccion de hallazgos en el plan
+
+```markdown
+## Hallazgos
+
+### [CRITICO] - Bloquea ejecucion
+- Descripcion del problema
+- Impacto
+- Propuesta de ajuste
+
+### [MAYOR] - Requiere ajuste
+- ...
+
+### [MENOR] - Informativo
+- ...
+```
+Formato final del plan tras ejecucion
+
+El plan actualizado debe incluir estas secciones finales:
+
+```markdown
+## Ejecucion
+
+**Iniciada**: [fecha-hora]
+**Completada**: [fecha-hora]
+**Tiempo total**: [duracion]
+**Estado**: COMPLETADO | COMPLETADO_CON_PENDIENTES | BLOQUEADO
+
+## Resumen de cambios
+
+- **Archivos modificados**: X
+- **Tests ejecutados**: X
+- **Tests pasados**: X
+- **Tests fallidos**: X
+
+### Cambios por archivo
+- `archivo.py`: [resumen breve]
+
+## Verificacion ejecutada
+
+- **SIEMPRE actualizar el plan** despues de cada fase o hallazgo importante.
+### Automatizada
+- pytest: PASS
+- import validation: PASS
+
+### Manual sugerida
+- [ ] `python main.py transcribe --help` → verificar nuevos flags
+- [ ] `outputs/` → revisar formato de reportes
+
+## Riesgos identificados
+
+- [MENOR] Compatibilidad con versiones anteriores de modelos
+- [INFO] Requiere HF_TOKEN para modelo X
+
+## Pendientes
+
+- [ ] Actualizar README con nuevos comandos
+- [ ] Probar con archivos de audio > 1 hora
+- [ ] Validar rollback en produccion
+```
 ### Automatizada (segun alcance)
 
 - `pytest`
@@ -61,24 +155,13 @@ Para cada fase:
 - validacion de imports/sintaxis en archivos modificados
 
 ### Manual
+🚫 **NO generar reporte separado**. El plan actualizado ES el reporte final.
 
-- Probar comando CLI impactado (`record`, `transcribe`, `diarize`, `summarize`, `generate-report`).
-- Revisar artefactos generados en `outputs/`.
-- Validar mensajes de error en escenarios de fallo esperados.
-
-## Discrepancias con el plan
-
-Si el plan no coincide con el estado actual del repo:
-
-1. Detener avance de la fase afectada.
-2. Explicar diferencia concreta:
-	- esperado por plan
-	- encontrado en codigo
-	- impacto tecnico
-3. Proponer opcion de ajuste y pedir confirmacion si cambia alcance.
-
-## Uso de otros agentes (cuando aplique)
-
+Al terminar ejecucion:
+- Confirmar al usuario que plan se actualizó.
+- Señalar sección `## Ejecucion` con estado final.
+- Listar cambios principales en `## Resumen de cambios`.
+- Enumerar pendientes/verificacion manual en `## Pendientes`.
 - `reasearch-codebase`: para entender implementacion existente antes de tocar codigo.
 - `research-verifier`: para validar findings si hay duda en referencias.
 - `plan-verification`: si se detecta que el plan es ambiguo o incompleto, para refinarlo colaborativamente con el usuario.

@@ -52,10 +52,16 @@ class EventBus(QObject):
     # Stage progress signal (generic progress indicator)
     stage_progress = Signal(str, int)  # stage_name, percent
     
+    # Session request signals (from UI to manager)
+    start_session_requested = Signal(object)  # SessionConfig object
+    pause_recording_requested = Signal()
+    resume_recording_requested = Signal()
+    stop_recording_requested = Signal()
+    
     # Session lifecycle signals
-    session_started = Signal(int)  # session_id
-    session_completed = Signal(dict)  # results dict with paths and metadata
-    session_error = Signal(str, str)  # error_msg, stage
+    session_started = Signal(str)  # session_info_json
+    session_completed = Signal(str, str)  # session_info_json, result_json
+    session_error = Signal(str, str)  # error_title, error_message
     session_state_changed = Signal(str)  # new_state (SessionState.value)
     
     # Auto-save signals
@@ -186,33 +192,55 @@ class EventBus(QObject):
         """
         self.stage_progress.emit(stage_name, percent)
     
-    def emit_session_started(self, session_id: int):
+    def emit_start_session_requested(self, config: 'SessionConfig'):
+        """
+        Emit start session request (from UI).
+        
+        Args:
+            config: SessionConfig object with settings
+        """
+        self.start_session_requested.emit(config)
+    
+    def emit_pause_recording(self):
+        """Emit pause recording request."""
+        self.pause_recording_requested.emit()
+    
+    def emit_resume_recording(self):
+        """Emit resume recording request."""
+        self.resume_recording_requested.emit()
+    
+    def emit_stop_recording(self):
+        """Emit stop recording request."""
+        self.stop_recording_requested.emit()
+    
+    def emit_session_started(self, session_info_json: str):
         """
         Emit session started event.
         
         Args:
-            session_id: Started session ID
+            session_info_json: JSON string with session info
         """
-        self.session_started.emit(session_id)
+        self.session_started.emit(session_info_json)
     
-    def emit_session_completed(self, results: Dict[str, Any]):
+    def emit_session_completed(self, session_info_json: str, result_json: str):
         """
         Emit session completed event.
         
         Args:
-            results: Dictionary containing session results and paths
+            session_info_json: JSON string with session info
+            result_json: JSON string with results and paths
         """
-        self.session_completed.emit(results)
+        self.session_completed.emit(session_info_json, result_json)
     
-    def emit_session_error(self, error_msg: str, stage: str):
+    def emit_session_error(self, error_title: str, error_message: str):
         """
         Emit session error.
         
         Args:
-            error_msg: Error message
-            stage: Stage where error occurred
+            error_title: Error title/type
+            error_message: Error message
         """
-        self.session_error.emit(error_msg, stage)
+        self.session_error.emit(error_title, error_message)
     
     def emit_session_state_changed(self, new_state: str):
         """
