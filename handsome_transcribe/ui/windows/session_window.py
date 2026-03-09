@@ -94,14 +94,19 @@ class SessionWindow(QMainWindow):
         # Create tabs
         self.config_panel = ConfigPanel(
             self.config_manager,
-            self.event_bus
+            self.event_bus,
+            self.db
         )
+        self.config_panel.session_requested.connect(self._on_session_requested)
         self.live_session_view = LiveSessionView(self.event_bus)
         self.interlocutores_panel = InterlocutoresPanel(
             self.speaker_manager,
             self.event_bus
         )
-        self.session_history_panel = SessionHistoryPanel(self.db)
+        self.session_history_panel = SessionHistoryPanel(
+            self.db,
+            self.event_bus
+        )
         
         # Add tabs to widget
         self.tab_widget.addTab(self.live_session_view, "Session")
@@ -201,11 +206,23 @@ class SessionWindow(QMainWindow):
         """Slot: session state changed."""
         self.update_status(state)
     
-    @Slot()
-    def _on_autosave_complete(self):
-        """Slot: auto-save completed."""
-        self._last_autosave_time = datetime.now()
-        self.update_status()
+    @Slot(object)
+    def _on_session_requested(self, config):
+        """Slot: session start requested from ConfigPanel."""
+        try:
+            # Create or update session manager
+            self.session_manager = SessionManager(
+                config,
+                self.event_bus,
+                self.db,
+                self.speaker_manager
+            )
+            
+            # Switch to live session tab
+            self.tab_widget.setCurrentWidget(self.live_session_view)
+        except Exception as e:
+            self.event_bus.emit_session_error("Failed to Start Session", str(e))
+    
     
     def update_status(self, state: Optional[str] = None):
         """
