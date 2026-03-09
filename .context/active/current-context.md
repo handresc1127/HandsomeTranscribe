@@ -55,3 +55,28 @@ Se mantiene la politica local-only y costo bajo como restriccion transversal par
 
 ## Referencia
 - Ver detalle completo en `.context/active/ui-interface-research/feature-context.md`.
+
+## Decision Matrix (2026-03-09)
+- Matriz ponderada completada en `.context/active/ui-interface-research/decision-matrix.md`.
+- Resultado: Desktop Python 86.0 vs Web Local 71.0 (escala 0-100).
+- Recomendacion actual: iniciar Fase 1 con Desktop Python por prioridad de microfono/perifericos y menor friccion tecnica inicial.
+
+## Implementation Plan (2026-03-09)
+- Plan de arquitectura y componentes: `.context/active/ui-interface-research/implementation-plan.md`.
+- Stack: PySide6, separacion UI + Application Services + Workers + Pipeline existente.
+- MVP: sesion grabacion/transcripcion en vivo (bloque) + diarizacion + resumen + resultados reproducibles.
+- 5 sprints incrementales propuestos, desde infraestructura hasta polish final.
+
+## Development Plan (2026-03-09) - LISTO PARA EJECUCION
+- Plan detallado por sprint: `.context/active/ui-interface-research/development-plan.md`.
+- 5 sprints de 1 semana c/u: Sprint 1 (Infrastructure), Sprint 2 (UI Base), Sprint 3 (Audio Capture), Sprint 4 (Pipeline), Sprint 5 (Results+Polish).
+- 85+ tests, min 80% coverage.
+- Horas estimadas: 60-72 horas (3-4 semanas con 1 dev full-time).
+- Criterios de aceptacion claros y medibles.
+- Riesgos documentados y mitigaciones por sprint.
+- Rollback plan definido.
+
+## Estado Investigacion y Planificacion
+- CERRADO: Investigacion de interfaz (feature context), decision matrix, implementation plan.
+- ABIERTO: Ejecucion (requiere desarrollador).
+- Contexto yplanes listos para coordinar con `implementator` o equipo de desarrollo.

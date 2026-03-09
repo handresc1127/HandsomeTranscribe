@@ -81,7 +81,7 @@ Si el plan no coincide con el estado actual del repo:
 
 - `reasearch-codebase`: para entender implementacion existente antes de tocar codigo.
 - `research-verifier`: para validar findings si hay duda en referencias.
-- `plan-verification`: si se detecta que el plan es ambiguo o incompleto.
+- `plan-verification`: si se detecta que el plan es ambiguo o incompleto, para refinarlo colaborativamente con el usuario.
 
 ## Reglas obligatorias
 
