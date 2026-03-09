@@ -355,8 +355,9 @@ class SessionWindow(QMainWindow):
             # Update status bar to show new auto-save time
             # Get current state from session_manager if available
             current_state = None
-            if self.session_manager and hasattr(self.session_manager, 'session_data'):
-                current_state = self.session_manager.session_data.state.name if self.session_manager.session_data else None
+            if self.session_manager:
+                state_enum = self.session_manager.get_current_state()
+                current_state = state_enum.name if state_enum else None
             self.update_status(current_state)
         except Exception as e:
             # Log error but don't crash on auto-save timestamp parse failure
@@ -407,7 +408,8 @@ class SessionWindow(QMainWindow):
         """
         if self.session_manager:
             from ..models import SessionState
-            if self.session_manager.state in [SessionState.RECORDING, SessionState.PAUSED]:
+            current_state = self.session_manager.get_current_state()
+            if current_state in [SessionState.RECORDING, SessionState.PAUSED]:
                 reply = QMessageBox.warning(
                     self,
                     "Active Session",
