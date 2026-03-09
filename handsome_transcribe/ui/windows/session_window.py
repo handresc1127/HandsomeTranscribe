@@ -65,6 +65,9 @@ class SessionWindow(QMainWindow):
         self.config_manager = ConfigManager()
         self.session_manager = None  # Created when session starts
         
+        # Initialize state (must be before _setup_ui which calls update_status)
+        self._last_autosave_time = None
+        
         # Setup UI
         logger.debug("Setting up UI components")
         self._setup_ui()
@@ -77,9 +80,6 @@ class SessionWindow(QMainWindow):
             (self.screen().availableGeometry().width() - 1200) // 2,
             (self.screen().availableGeometry().height() - 800) // 2
         )
-        
-        # State
-        self._last_autosave_time = None
         
         logger.info("SessionWindow initialized successfully")
     
@@ -341,6 +341,26 @@ class SessionWindow(QMainWindow):
     def _on_session_state_changed(self, state: str):
         """Slot: session state changed."""
         self.update_status(state)
+    
+    @Slot(str)
+    def _on_autosave_complete(self, timestamp: str):
+        """
+        Slot: auto-save completed, update last save time.
+        
+        Args:
+            timestamp: ISO format timestamp string
+        """
+        try:
+            self._last_autosave_time = datetime.fromisoformat(timestamp)
+            # Update status bar to show new auto-save time
+            # Get current state from session_manager if available
+            current_state = None
+            if self.session_manager and hasattr(self.session_manager, 'session_data'):
+                current_state = self.session_manager.session_data.state.name if self.session_manager.session_data else None
+            self.update_status(current_state)
+        except Exception as e:
+            # Log error but don't crash on auto-save timestamp parse failure
+            print(f"Warning: Failed to parse autosave timestamp: {e}")
     
     @Slot(object)
     def _on_session_requested(self, config):

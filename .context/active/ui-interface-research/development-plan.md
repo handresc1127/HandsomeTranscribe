@@ -1968,6 +1968,64 @@ HandsomeTranscribe Desktop UI está lista para uso con:
 1. Ejecutar full E2E test con sesión real (audio 30-60 seg)
 2. Refactorizar tests de SessionManager para mejor cobertura
 3. Agregar iconos y polish visual adicional (opcional)
+
+---
+
+## Post-Sprint 5 - Correcciones de Lanzamiento
+
+**Fecha:** 2026-03-09 16:18 - 16:24  
+**Ejecutor:** implementator  
+**Contexto:** Primera ejecución de `python desktop_app.py` reveló 2 bugs de inicialización
+
+### Hallazgos al lanzar aplicación
+
+**Bug 1: AttributeError '_last_autosave_time'**
+- **Error:** `'SessionWindow' object has no attribute '_last_autosave_time'`
+- **Causa:** Atributo inicializado en línea 82 DESPUÉS de `_setup_ui()` (línea 70), pero `_setup_ui()` llama a `update_status("IDLE")` que requiere el atributo
+- **Solución:** Mover inicialización de `self._last_autosave_time = None` ANTES de `_setup_ui()` (nueva línea 67)
+- **Archivo:** `handsome_transcribe/ui/windows/session_window.py`
+
+**Bug 2: AttributeError '_on_autosave_complete'**
+- **Error:** `'SessionWindow' object has no attribute '_on_autosave_complete'`
+- **Causa:** `_connect_signals()` conecta `self.event_bus.autosave_complete` a método inexistente
+- **Solución:** Implementar método `_on_autosave_complete(timestamp: str)` que:
+  - Parse ISO timestamp con `datetime.fromisoformat()`
+  - Actualice `self._last_autosave_time`
+  - Llame a `update_status()` para refrescar status bar
+- **Archivo:** `handsome_transcribe/ui/windows/session_window.py` (líneas 346-366)
+
+### Cambios realizados
+
+**session_window.py (+25 líneas):**
+1. **Línea 67**: Agregada inicialización temprana de `_last_autosave_time = None` con comentario explicativo
+2. **Líneas 346-366**: Implementado método `_on_autosave_complete(timestamp)` con:
+   - Decorador `@Slot(str)`
+   - Parse de timestamp ISO format
+   - Actualización de `_last_autosave_time`
+   - Obtención de estado actual de `session_manager` si disponible
+   - Llamada a `update_status()` con estado actual
+   - Try/except para manejar errores de parse sin crashear
+
+### Verificación
+
+**Lanzamiento exitoso:**
+```bash
+python desktop_app.py
+# Output:
+16:23:59 [INFO] handsome_transcribe.ui.session_window: SessionWindow initialized successfully
+2026-03-09 16:23:59,514 - __main__ - INFO - HandsomeTranscribe desktop application started
+```
+
+- ✅ Aplicación lanza sin errores
+- ✅ Todos los logs de inicialización correctos
+- ✅ SessionWindow, ResultsPanel, logging funcionando
+- ⚠️ Warnings Shiboken (inofensivos, conversión dict→C++ en QSS styles)
+
+### Estado final
+
+**Desktop UI LISTA PARA USO** ✅
+
+Aplicación lanza correctamente y está operacional para E2E testing manual.
 4. Considerar migración a Web UI (Phase 2) basado en learnings
 # Abrir app
 # Menu File > Open Past Session -> ver sesion anterior
