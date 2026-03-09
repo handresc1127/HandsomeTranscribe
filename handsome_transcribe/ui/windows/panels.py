@@ -9,20 +9,29 @@ Contains:
 """
 
 import json
-from typing import Optional, List
+import os
+import subprocess
+from typing import Optional, List, Dict
 from datetime import datetime
+from pathlib import Path
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QCheckBox,
     QLineEdit, QTextEdit, QPushButton, QTableWidget, QTableWidgetItem,
     QPlainTextEdit, QProgressBar, QListWidget, QListWidgetItem,
-    QMessageBox, QDialog, QScrollArea, QFrame, QGroupBox, QSpinBox
+    QMessageBox, QDialog, QScrollArea, QFrame, QGroupBox, QSpinBox,
+    QTreeWidget, QTreeWidgetItem
 )
-from PySide6.QtCore import Qt, Slot, QTimer, Signal
-from PySide6.QtGui import QFont, QIcon, QColor
+from PySide6.QtCore import Qt, Slot, QTimer, Signal, QUrl
+from PySide6.QtGui import QFont, QIcon, QColor, QDesktopServices
+from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 
 from ..config_manager import ConfigManager
 from ..event_bus import EventBus
+from ..logger import get_logger
+
+# Create logger for panels module
+logger = get_logger('ui.panels')
 from ..speaker_manager import SpeakerManager
 from ..database import Database
 from ..models import SessionConfig, SessionState
@@ -1095,3 +1104,590 @@ class SessionHistoryPanel(QWidget):
         """Slot: auto-save event triggered."""
         # Reload sessions to show new/updated entries
         self._load_sessions()
+
+
+class ResultsPanel(QWidget):
+    """Results viewer with media playback and file access."""
+    
+    # Signal: request to start a new session
+    new_session_requested = Signal()
+    
+    def __init__(self, event_bus: EventBus):
+        super().__init__()
+        logger.info("Initializing ResultsPanel")
+        self.event_bus = event_bus
+        self._session_data = None
+        self._results = None
+        
+        self._setup_ui()
+        
+        # Connect to EventBus
+        self.event_bus.session_completed.connect(self._on_session_completed)
+        logger.debug("ResultsPanel initialized successfully")
+    
+    def _setup_ui(self):
+        """Create results UI components."""
+        main_layout = QVBoxLayout()
+        
+        # Title
+        title = QLabel("Session Results")
+        title.setFont(QFont("Arial", 14, QFont.Bold))
+        main_layout.addWidget(title)
+        
+        # Results tree widget
+        self.results_tree = QTreeWidget()
+        self.results_tree.setHeaderLabels(["Item", "Value", "Actions"])
+        self.results_tree.setColumnWidth(0, 250)
+        self.results_tree.setColumnWidth(1, 300)
+        self.results_tree.setAlternatingRowColors(True)
+        self.results_tree.setStyleSheet("""
+            QTreeWidget {
+                border: 1px solid #bdc3c7;
+                border-radius: 3px;
+                background-color: #ffffff;
+            }
+            QTreeWidget::item {
+                padding: 8px;
+            }
+            QTreeWidget::item:selected {
+                background-color: #3498db;
+                color: white;
+            }
+        """)
+        main_layout.addWidget(self.results_tree, 1)
+        
+        # Media player controls (initially hidden)
+        self.media_controls = self._create_media_controls()
+        main_layout.addWidget(self.media_controls)
+        self.media_controls.hide()
+        
+        # Action buttons
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+        
+        self.new_session_btn = QPushButton("Nueva Sesión")
+        self.new_session_btn.clicked.connect(self._on_new_session_clicked)
+        self.new_session_btn.setEnabled(False)
+        self.new_session_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #3498db;
+                color: white;
+                font-weight: bold;
+                padding: 10px 20px;
+                border-radius: 5px;
+                font-size: 12px;
+            }
+            QPushButton:disabled {
+                background-color: #bdc3c7;
+            }
+            QPushButton:hover:enabled {
+                background-color: #2980b9;
+            }
+        """)
+        button_layout.addWidget(self.new_session_btn)
+        
+        main_layout.addLayout(button_layout)
+        
+        self.setLayout(main_layout)
+    
+    def _create_media_controls(self) -> QGroupBox:
+        """Create media player control widgets."""
+        group = QGroupBox("Audio Player")
+        layout = QVBoxLayout()
+        
+        # Initialize media player
+        self.media_player = QMediaPlayer()
+        self.audio_output = QAudioOutput()
+        self.media_player.setAudioOutput(self.audio_output)
+        
+        # Playback controls
+        controls_layout = QHBoxLayout()
+        
+        self.play_btn = QPushButton("▶ Play")
+        self.play_btn.clicked.connect(self._on_play_clicked)
+        controls_layout.addWidget(self.play_btn)
+        
+        self.pause_btn = QPushButton("⏸ Pause")
+        self.pause_btn.clicked.connect(self._on_pause_clicked)
+        self.pause_btn.setEnabled(False)
+        controls_layout.addWidget(self.pause_btn)
+        
+        self.stop_btn = QPushButton("⏹ Stop")
+        self.stop_btn.clicked.connect(self._on_stop_clicked)
+        self.stop_btn.setEnabled(False)
+        controls_layout.addWidget(self.stop_btn)
+        
+        controls_layout.addSpacing(20)
+        controls_layout.addWidget(QLabel("Volume:"))
+        
+        # Volume control (0-100)
+        from PySide6.QtWidgets import QSlider
+        self.volume_slider = QSlider(Qt.Horizontal)
+        self.volume_slider.setRange(0, 100)
+        self.volume_slider.setValue(70)
+        self.volume_slider.setMaximumWidth(150)
+        self.volume_slider.valueChanged.connect(self._on_volume_changed)
+        controls_layout.addWidget(self.volume_slider)
+        
+        self.volume_label = QLabel("70%")
+        self.volume_label.setMinimumWidth(40)
+        controls_layout.addWidget(self.volume_label)
+        
+        controls_layout.addStretch()
+        layout.addLayout(controls_layout)
+        
+        # Time display
+        time_layout = QHBoxLayout()
+        self.time_label = QLabel("00:00 / 00:00")
+        self.time_label.setStyleSheet("font-family: 'Courier New', monospace; font-size: 11px;")
+        time_layout.addWidget(self.time_label)
+        time_layout.addStretch()
+        layout.addLayout(time_layout)
+        
+        # Connect player signals
+        self.media_player.positionChanged.connect(self._on_position_changed)
+        self.media_player.durationChanged.connect(self._on_duration_changed)
+        self.media_player.playbackStateChanged.connect(self._on_playback_state_changed)
+        
+        group.setLayout(layout)
+        return group
+    
+    @Slot(dict)
+    def _on_session_completed(self, results: Dict):
+        """Slot: session processing completed, display results."""
+        logger.info(f"Session completed, displaying results for session {results.get('session_data', {}).get('id', 'N/A')}")
+        self._results = results
+        self._session_data = results.get("session_data")
+        
+        self._populate_results_tree(results)
+        self.new_session_btn.setEnabled(True)
+        logger.debug("Results tree populated successfully")
+    
+    def _populate_results_tree(self, results: Dict):
+        """Populate tree with session artifacts."""
+        self.results_tree.clear()
+        
+        session_data = results.get("session_data")
+        if not session_data:
+            return
+        
+        session_dir = Path(session_data["directorio_sesion"])
+        
+        # Session info (root item)
+        session_item = QTreeWidgetItem(["Session Information", "", ""])
+        session_item.setFont(0, QFont("Arial", 10, QFont.Bold))
+        self.results_tree.addTopLevelItem(session_item)
+        
+        # Session details (children)
+        details = [
+            ("Session ID", str(session_data.get("id", "N/A"))),
+            ("Date", session_data.get("fecha_inicio", "N/A")),
+            ("Duration", f"{session_data.get('duracion_segundos', 0)} seconds"),
+            ("Directory", str(session_dir))
+        ]
+        for key, value in details:
+            child = QTreeWidgetItem([key, value, ""])
+            session_item.addChild(child)
+        
+        # Add "Open Folder" button to directory row
+        folder_btn = QPushButton("📁 Open Folder")
+        folder_btn.clicked.connect(lambda: self._open_folder(session_dir))
+        folder_btn.setMaximumWidth(120)
+        self.results_tree.setItemWidget(session_item.child(3), 2, folder_btn)
+        
+        session_item.setExpanded(True)
+        
+        # Audio file
+        audio_path = session_dir / "recording.wav"
+        if audio_path.exists():
+            audio_item = QTreeWidgetItem(["Audio Recording", str(audio_path), ""])
+            audio_item.setFont(0, QFont("Arial", 10, QFont.Bold))
+            self.results_tree.addTopLevelItem(audio_item)
+            
+            play_btn = QPushButton("▶ Play Audio")
+            play_btn.clicked.connect(lambda: self._load_audio(audio_path))
+            play_btn.setMaximumWidth(120)
+            self.results_tree.setItemWidget(audio_item, 2, play_btn)
+        
+        # Transcript files
+        transcript_txt = session_dir / "transcript.txt"
+        transcript_json = session_dir / "transcript.json"
+        if transcript_txt.exists() or transcript_json.exists():
+            transcript_item = QTreeWidgetItem(["Transcription", "", ""])
+            transcript_item.setFont(0, QFont("Arial", 10, QFont.Bold))
+            self.results_tree.addTopLevelItem(transcript_item)
+            
+            if transcript_txt.exists():
+                txt_child = QTreeWidgetItem(["Transcript (Text)", str(transcript_txt), ""])
+                transcript_item.addChild(txt_child)
+                
+                view_btn = QPushButton("👁 View")
+                view_btn.clicked.connect(lambda: self._view_transcript(transcript_txt))
+                view_btn.setMaximumWidth(120)
+                self.results_tree.setItemWidget(txt_child, 2, view_btn)
+            
+            if transcript_json.exists():
+                json_child = QTreeWidgetItem(["Transcript (JSON)", str(transcript_json), ""])
+                transcript_item.addChild(json_child)
+                
+                open_btn = QPushButton("📄 Open")
+                open_btn.clicked.connect(lambda: self._open_file(transcript_json))
+                open_btn.setMaximumWidth(120)
+                self.results_tree.setItemWidget(json_child, 2, open_btn)
+            
+            transcript_item.setExpanded(True)
+        
+        # Summary file
+        summary_path = session_dir / "summary.md"
+        if summary_path.exists():
+            summary_item = QTreeWidgetItem(["Summary", str(summary_path), ""])
+            summary_item.setFont(0, QFont("Arial", 10, QFont.Bold))
+            self.results_tree.addTopLevelItem(summary_item)
+            
+            view_btn = QPushButton("👁 View Summary")
+            view_btn.clicked.connect(lambda: self._view_summary(summary_path))
+            view_btn.setMaximumWidth(120)
+            self.results_tree.setItemWidget(summary_item, 2, view_btn)
+        
+        # Reports
+        reports = results.get("reports", {})
+        if reports:
+            reports_item = QTreeWidgetItem(["Reports", "", ""])
+            reports_item.setFont(0, QFont("Arial", 10, QFont.Bold))
+            self.results_tree.addTopLevelItem(reports_item)
+            
+            for format_type, report_path in reports.items():
+                report_path = Path(report_path)
+                if report_path.exists():
+                    format_label = format_type.upper()
+                    report_child = QTreeWidgetItem([f"Report ({format_label})", str(report_path), ""])
+                    reports_item.addChild(report_child)
+                    
+                    open_btn = QPushButton("📄 Open")
+                    open_btn.clicked.connect(lambda p=report_path: self._open_file(p))
+                    open_btn.setMaximumWidth(120)
+                    self.results_tree.setItemWidget(report_child, 2, open_btn)
+            
+            reports_item.setExpanded(True)
+        
+        # Temp files (partial recordings)
+        temp_dir = session_dir / "temp"
+        if temp_dir.exists() and any(temp_dir.iterdir()):
+            temp_item = QTreeWidgetItem(["Partial Recordings (temp/)", str(temp_dir), ""])
+            temp_item.setFont(0, QFont("Arial", 10, QFont.Bold))
+            temp_item.setForeground(0, QColor("#95a5a6"))
+            self.results_tree.addTopLevelItem(temp_item)
+            
+            folder_btn = QPushButton("📁 Open Folder")
+            folder_btn.clicked.connect(lambda: self._open_folder(temp_dir))
+            folder_btn.setMaximumWidth(120)
+            self.results_tree.setItemWidget(temp_item, 2, folder_btn)
+    
+    def _load_audio(self, audio_path: Path):
+        """Load audio file into media player."""
+        logger.info(f"Loading audio file: {audio_path}")
+        self.media_player.setSource(QUrl.fromLocalFile(str(audio_path)))
+        self.media_controls.show()
+        self.play_btn.setEnabled(True)
+        self._on_volume_changed(self.volume_slider.value())
+        
+        logger.debug(f"Audio loaded successfully, duration: {self.media_player.duration() // 1000}s")
+        
+        QMessageBox.information(
+            self,
+            "Audio Loaded",
+            f"Audio file loaded:\n{audio_path.name}\n\nClick Play to start playback."
+        )
+    
+    def _view_transcript(self, transcript_path: Path):
+        """Open transcript in a dialog."""
+        try:
+            with open(transcript_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            dialog = TranscriptViewDialog(content, transcript_path.name, self)
+            dialog.exec()
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"Failed to read transcript:\n{e}"
+            )
+    
+    def _view_summary(self, summary_path: Path):
+        """Open summary in a dialog."""
+        try:
+            with open(summary_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            dialog = SummaryViewDialog(content, summary_path.name, self)
+            dialog.exec()
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"Failed to read summary:\n{e}"
+            )
+    
+    def _open_file(self, file_path: Path):
+        """Open file with system default application."""
+        try:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(file_path)))
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"Failed to open file:\n{e}"
+            )
+    
+    def _open_folder(self, folder_path: Path):
+        """Open folder in system file explorer."""
+        try:
+            if os.name == 'nt':  # Windows
+                os.startfile(str(folder_path))
+            elif os.name == 'posix':  # Linux/macOS
+                subprocess.run(['xdg-open' if os.uname().sysname == 'Linux' else 'open', str(folder_path)])
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"Failed to open folder:\n{e}"
+            )
+    
+    @Slot()
+    def _on_play_clicked(self):
+        """Slot: play button clicked."""
+        self.media_player.play()
+    
+    @Slot()
+    def _on_pause_clicked(self):
+        """Slot: pause button clicked."""
+        self.media_player.pause()
+    
+    @Slot()
+    def _on_stop_clicked(self):
+        """Slot: stop button clicked."""
+        self.media_player.stop()
+    
+    @Slot(int)
+    def _on_volume_changed(self, value: int):
+        """Slot: volume slider changed."""
+        self.audio_output.setVolume(value / 100.0)
+        self.volume_label.setText(f"{value}%")
+    
+    @Slot(int)
+    def _on_position_changed(self, position: int):
+        """Slot: playback position changed."""
+        self._update_time_label()
+    
+    @Slot(int)
+    def _on_duration_changed(self, duration: int):
+        """Slot: media duration available."""
+        self._update_time_label()
+    
+    def _update_time_label(self):
+        """Update time display label."""
+        position = self.media_player.position() // 1000  # ms to seconds
+        duration = self.media_player.duration() // 1000
+        
+        pos_min, pos_sec = divmod(position, 60)
+        dur_min, dur_sec = divmod(duration, 60)
+        
+        self.time_label.setText(f"{pos_min:02d}:{pos_sec:02d} / {dur_min:02d}:{dur_sec:02d}")
+    
+    @Slot()
+    def _on_playback_state_changed(self):
+        """Slot: playback state changed."""
+        state = self.media_player.playbackState()
+        
+        if state == QMediaPlayer.PlayingState:
+            self.play_btn.setEnabled(False)
+            self.pause_btn.setEnabled(True)
+            self.stop_btn.setEnabled(True)
+        elif state == QMediaPlayer.PausedState:
+            self.play_btn.setEnabled(True)
+            self.pause_btn.setEnabled(False)
+            self.stop_btn.setEnabled(True)
+        else:  # Stopped
+            self.play_btn.setEnabled(True)
+            self.pause_btn.setEnabled(False)
+            self.stop_btn.setEnabled(False)
+    
+    @Slot()
+    def _on_new_session_clicked(self):
+        """Slot: new session button clicked."""
+        logger.info("New session requested by user")
+        reply = QMessageBox.question(
+            self,
+            "Nueva Sesión",
+            "¿Desea iniciar una nueva sesión?\n\n"
+            "Esto cerrará los resultados actuales y volverá a la configuración.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            logger.info("User confirmed new session, clearing results")
+            self._clear_results()
+            self.new_session_requested.emit()
+        else:
+            logger.debug("User cancelled new session request")
+    
+    def _clear_results(self):
+        """Clear current results and reset UI."""
+        self.results_tree.clear()
+        self.media_player.stop()
+        self.media_player.setSource(QUrl())
+        self.media_controls.hide()
+        self.new_session_btn.setEnabled(False)
+        self._session_data = None
+        self._results = None
+
+
+class TranscriptViewDialog(QDialog):
+    """Dialog for viewing transcript content."""
+    
+    def __init__(self, content: str, filename: str, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"Transcript - {filename}")
+        self.resize(800, 600)
+        
+        layout = QVBoxLayout()
+        
+        # Content area
+        self.text_view = QPlainTextEdit()
+        self.text_view.setPlainText(content)
+        self.text_view.setReadOnly(True)
+        self.text_view.setFont(QFont("Courier New", 10))
+        self.text_view.setStyleSheet("""
+            QPlainTextEdit {
+                background-color: #f9f9f9;
+                border: 1px solid #bdc3c7;
+                padding: 10px;
+            }
+        """)
+        layout.addWidget(self.text_view)
+        
+        # Button row
+        button_layout = QHBoxLayout()
+        
+        copy_btn = QPushButton("📋 Copy All")
+        copy_btn.clicked.connect(self._on_copy_all)
+        button_layout.addWidget(copy_btn)
+        
+        save_btn = QPushButton("💾 Save As...")
+        save_btn.clicked.connect(self._on_save_as)
+        button_layout.addWidget(save_btn)
+        
+        button_layout.addStretch()
+        
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.accept)
+        button_layout.addWidget(close_btn)
+        
+        layout.addLayout(button_layout)
+        
+        self.setLayout(layout)
+        self._content = content
+        self._filename = filename
+    
+    @Slot()
+    def _on_copy_all(self):
+        """Copy all text to clipboard."""
+        from PySide6.QtWidgets import QApplication
+        QApplication.clipboard().setText(self._content)
+        QMessageBox.information(self, "Copied", "Transcript copied to clipboard.")
+    
+    @Slot()
+    def _on_save_as(self):
+        """Save transcript to a new file."""
+        from PySide6.QtWidgets import QFileDialog
+        filepath, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Transcript As",
+            self._filename,
+            "Text Files (*.txt);;All Files (*.*)"
+        )
+        
+        if filepath:
+            try:
+                with open(filepath, 'w', encoding='utf-8') as f:
+                    f.write(self._content)
+                QMessageBox.information(self, "Saved", f"Transcript saved to:\n{filepath}")
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to save:\n{e}")
+
+
+class SummaryViewDialog(QDialog):
+    """Dialog for viewing summary with markdown rendering."""
+    
+    def __init__(self, content: str, filename: str, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"Summary - {filename}")
+        self.resize(800, 600)
+        
+        layout = QVBoxLayout()
+        
+        # Content area with QTextBrowser for markdown rendering
+        from PySide6.QtWidgets import QTextBrowser
+        self.text_view = QTextBrowser()
+        self.text_view.setMarkdown(content)
+        self.text_view.setReadOnly(True)
+        self.text_view.setOpenExternalLinks(False)
+        self.text_view.setStyleSheet("""
+            QTextBrowser {
+                background-color: #ffffff;
+                border: 1px solid #bdc3c7;
+                padding: 15px;
+            }
+        """)
+        layout.addWidget(self.text_view)
+        
+        # Button row
+        button_layout = QHBoxLayout()
+        
+        copy_btn = QPushButton("📋 Copy (Markdown)")
+        copy_btn.clicked.connect(self._on_copy_all)
+        button_layout.addWidget(copy_btn)
+        
+        save_btn = QPushButton("💾 Save As...")
+        save_btn.clicked.connect(self._on_save_as)
+        button_layout.addWidget(save_btn)
+        
+        button_layout.addStretch()
+        
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.accept)
+        button_layout.addWidget(close_btn)
+        
+        layout.addLayout(button_layout)
+        
+        self.setLayout(layout)
+        self._content = content
+        self._filename = filename
+    
+    @Slot()
+    def _on_copy_all(self):
+        """Copy raw markdown to clipboard."""
+        from PySide6.QtWidgets import QApplication
+        QApplication.clipboard().setText(self._content)
+        QMessageBox.information(self, "Copied", "Summary markdown copied to clipboard.")
+    
+    @Slot()
+    def _on_save_as(self):
+        """Save summary to a new file."""
+        from PySide6.QtWidgets import QFileDialog
+        filepath, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Summary As",
+            self._filename,
+            "Markdown Files (*.md);;Text Files (*.txt);;All Files (*.*)"
+        )
+        
+        if filepath:
+            try:
+                with open(filepath, 'w', encoding='utf-8') as f:
+                    f.write(self._content)
+                QMessageBox.information(self, "Saved", f"Summary saved to:\n{filepath}")
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to save:\n{e}")

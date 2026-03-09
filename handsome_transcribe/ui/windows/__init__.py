@@ -9,7 +9,8 @@ from .panels import (
     ConfigPanel,
     LiveSessionView,
     InterlocutoresPanel,
-    SessionHistoryPanel
+    SessionHistoryPanel,
+    ResultsPanel
 )
 
 __all__ = [
@@ -17,5 +18,6 @@ __all__ = [
     "ConfigPanel",
     "LiveSessionView",
     "InterlocutoresPanel",
-    "SessionHistoryPanel"
+    "SessionHistoryPanel",
+    "ResultsPanel"
 ]

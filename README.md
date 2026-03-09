@@ -2,6 +2,8 @@
 
 HandsomeTranscribe is a Python-based tool that records in-person meetings, automatically transcribes the conversation, identifies speakers, and generates structured meeting summaries and minutes.
 
+**NEW**: Desktop UI with real-time transcription, speaker management, and visual results viewer!
+
 ---
 
 ## Features
@@ -11,6 +13,40 @@ HandsomeTranscribe is a Python-based tool that records in-person meetings, autom
 - 👥 **Speaker Diarization** — label each segment by speaker using [pyannote.audio](https://github.com/pyannote/pyannote-audio)
 - 📋 **Meeting Summarization** — extract summary, key topics, action items, and decisions
 - 📄 **Report Generation** — export reports as Markdown, JSON, and PDF
+- 🖥️ **Desktop UI** — PySide6-based GUI with live transcription, speaker library, session history, and results viewer
+- 🎵 **Audio Playback** — built-in audio player for session recordings
+- 📊 **Session Management** — database-backed session history with auto-save and crash recovery
+
+---
+
+## User Interfaces
+
+HandsomeTranscribe provides two interfaces:
+
+### 1. Desktop GUI (NEW - Recommended)
+
+A modern Qt-based desktop application with:
+- **Real-time Recording**: Live audio capture with visual feedback
+- **Live Transcription**: See transcription progress as you record
+- **Speaker Library**: Manage speaker profiles for improved diarization
+- **Session History**: Browse and filter past sessions
+- **Results Viewer**: Interactive tree view of session artifacts with audio playback
+- **Report Access**: Open PDF, Markdown, JSON reports with system apps
+- **Auto-save**: Sessions saved incrementally (crash-safe)
+
+**Launch Desktop App:**
+```bash
+python desktop_app.py
+```
+
+### 2. Command-Line Interface (CLI)
+
+Traditional CLI for scripting and automation (original interface):
+```bash
+python main.py [command] [options]
+```
+
+Both interfaces share the same backend and produce identical outputs.
 
 ---
 
@@ -20,22 +56,55 @@ HandsomeTranscribe is a Python-based tool that records in-person meetings, autom
 HandsomeTranscribe/
 ├── handsome_transcribe/
 │   ├── audio/
-│   │   └── recorder.py           # Microphone recording
+│   │   └── recorder.py            # Microphone recording
 │   ├── transcription/
 │   │   └── whisper_transcriber.py # Whisper-based speech-to-text
 │   ├── diarization/
 │   │   └── speaker_identifier.py  # pyannote.audio speaker diarization
 │   ├── summarization/
 │   │   └── meeting_summarizer.py  # Meeting summarization & extraction
-│   └── reporting/
-│       └── report_generator.py    # Markdown / JSON / PDF reports
+│   ├── reporting/
+│   │   └── report_generator.py    # Markdown / JSON / PDF reports
+│   └── ui/                        # Desktop GUI (NEW)
+│       ├── windows/
+│       │   ├── session_window.py  # Main application window
+│       │   └── panels.py          # Tab panels (Config, Session, Results, etc.)
+│       ├── workers/
+│       │   ├── recorder_worker.py # Audio recording background worker
+│       │   ├── transcription_worker.py
+│       │   ├── diarization_worker.py
+│       │   ├── summarization_worker.py
+│       │   └── reporting_worker.py
+│       ├── database.py            # SQLite session persistence
+│       ├── event_bus.py           # Signal/slot event system
+│       ├── session_manager.py     # Session lifecycle coordinator
+│       ├── speaker_manager.py     # Speaker library management
+│       ├── config_manager.py      # Configuration persistence
+│       └── logger.py              # Application logging
 ├── outputs/
-│   ├── audio/       # Recorded WAV files
-│   ├── transcripts/ # Transcript JSON files
-│   └── reports/     # Generated reports
+│   ├── audio/       # Recorded WAV files (CLI)
+│   ├── transcripts/ # Transcript JSON files (CLI)
+│   ├── reports/     # Generated reports (CLI)
+│   └── sessions/    # Session directories (Desktop UI)
+│       └── session_<id>/
+│           ├── recording.wav
+│           ├── transcript.txt
+│           ├── transcript.json
+│           ├── summary.md
+│           ├── session_<id>_report.{md,json,pdf}
+│           └── temp/  # Partial recordings (auto-save)
+├── logs/
+│   └── handsome_transcribe_YYYYMMDD.log  # Application logs
 ├── tests/
-│   └── test_*.py
-├── main.py          # CLI entry point
+│   ├── test_*.py          # CLI module tests
+│   └── ui/
+│       ├── sprint1_*.py   # Infrastructure tests
+│       ├── sprint2_*.py   # UI base tests
+│       ├── sprint3_*.py   # Audio capture tests
+│       ├── sprint4_*.py   # Processing pipeline tests
+│       └── sprint5_*.py   # Results & polish tests
+├── main.py              # CLI entry point
+├── desktop_app.py       # Desktop GUI entry point (NEW)
 ├── requirements.txt
 └── README.md
 ```
@@ -109,6 +178,50 @@ export HF_TOKEN="hf_your_token_here"
 ---
 
 ## Usage
+
+### Desktop GUI Workflow
+
+1. **Launch the app:**
+   ```bash
+   python desktop_app.py
+   ```
+
+2. **Configure Settings** (Configuration tab):
+   - Select audio input device
+   - Choose Whisper model size (tiny, base, small, medium, large)
+   - Set language (auto-detect or specify)
+   - Enable/disable diarization and summarization
+   - Select output report formats (Markdown, JSON, PDF)
+
+3. **Add Speakers (Optional)** (Interlocutores tab):
+   - Click "Add New Speaker"
+   - Enter speaker name and email
+   - Upload audio sample (WAV file, 10+ seconds recommended)
+   - Speakers are stored for improved diarization accuracy
+
+4. **Start Recording** (Session tab):
+   - Click "Start Recording" button
+   - Speak clearly into microphone
+   - Live transcription appears in text area
+   - Click "Complete Session" when done
+   - Processing begins automatically (transcription → diarization → summary → reports)
+
+5. **View Results** (Results tab):
+   - Tree view shows all session artifacts:
+     - **Audio Recording**: Play audio with built-in player
+     - **Transcription**: View text or JSON transcript in dialog
+     - **Summary**: View markdown summary in rendered dialog
+     - **Reports**: Open PDF/Markdown/JSON reports with system apps
+   - Click "Open Folder" to browse session directory in file explorer
+   - Click "Nueva Sesión" to start a new recording
+
+6. **Browse History** (Sesiones tab):
+   - Table shows all past sessions with metadata
+   - Filter by state (COMPLETED, RECORDING, ERROR)
+   - Click rows to view session details
+   - View session statistics (total sessions, average duration)
+
+### CLI Workflow (Legacy)
 
 ### Record a meeting
 
