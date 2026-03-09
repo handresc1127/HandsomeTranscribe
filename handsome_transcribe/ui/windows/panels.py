@@ -467,6 +467,7 @@ class LiveSessionView(QWidget):
         self.event_bus.speaker_identified.connect(self._on_speaker_identified)
         self.event_bus.session_state_changed.connect(self._on_state_changed)
         self.event_bus.stage_progress.connect(self._on_stage_progress)
+        self.event_bus.recording_frame_ready.connect(self._on_recording_progress)
     
     @Slot(list)
     def _on_partial_transcript(self, segments: list):
@@ -601,6 +602,24 @@ class LiveSessionView(QWidget):
         )
         if reply == QMessageBox.Yes:
             self.event_bus.emit_stop_recording()
+    
+    @Slot(int, float)
+    def _on_recording_progress(self, frames_count: int, duration_sec: float):
+        """
+        Slot: recording progress update.
+        
+        Args:
+            frames_count: Total frames recorded
+            duration_sec: Total duration in seconds
+        """
+        # Update progress bar with duration
+        self.duration_progress.setValue(int(duration_sec))
+        
+        # Format time as MM:SS
+        minutes = int(duration_sec // 60)
+        seconds = int(duration_sec % 60)
+        self.duration_progress.setFormat(f"{minutes:02d}:{seconds:02d}")
+
 
 
 class InterlocutoresPanel(QWidget):

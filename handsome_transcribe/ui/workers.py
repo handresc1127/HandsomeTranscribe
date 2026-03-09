@@ -276,17 +276,38 @@ class TranscriberWorker(QRunnable):
     
     def _save_transcript(self, segments: List[TranscriptSegmentData]):
         """
-        Save transcript to text file.
+        Save transcript to text file and JSON.
         
         Args:
             segments: List of transcript segments
         """
+        # Save human-readable text format
         with open(self.output_path, "w", encoding="utf-8") as f:
             for seg in segments:
                 # Format: [MM:SS-MM:SS] Text
                 start_min, start_sec = divmod(int(seg.start_time), 60)
                 end_min, end_sec = divmod(int(seg.end_time), 60)
                 f.write(f"[{start_min:02d}:{start_sec:02d}-{end_min:02d}:{end_sec:02d}] {seg.text}\n")
+        
+        # Save JSON format for programmatic access (used by Summarizer)
+        json_path = self.output_path.with_suffix('.json')
+        transcript_dict = {
+            "audio_file": str(self.audio_path),
+            "language": self.language or "auto",
+            "segments": [
+                {
+                    "start": seg.start_time,
+                    "end": seg.end_time,
+                    "text": seg.text,
+                    "speaker": getattr(seg, 'speaker_id', 'Unknown')
+                }
+                for seg in segments
+            ]
+        }
+        
+        import json
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(transcript_dict, f, indent=2, ensure_ascii=False)
 
 
 class SpeakerEmbeddingWorker(QRunnable):

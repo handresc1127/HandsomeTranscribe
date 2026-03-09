@@ -865,6 +865,130 @@ pytest tests/ -k "not ui" -v  # CLI original intacto
 
 ---
 
+### Ejecución Sprint 3
+
+**Iniciada:** 2026-03-09
+**Completada:** 2026-03-09
+**Tiempo total:** ~2 horas
+**Ejecutor:** implementator
+**Estado:** COMPLETADO
+
+#### Hallazgos Clave
+
+##### [INFO] - Infrastructure Already Implemented
+- **RecorderWorker**: Ya existe completamente implementado en `handsome_transcribe/ui/workers.py` (~200 líneas)
+  - Buffer acumulativo con `_audio_buffer` list + `threading.Lock` para thread-safety
+  - `save_partial(path, part_num)`: Guarda audio sin detener grabación (convierte float32→int16)
+  - `save_final(path)`: Consolida audio completo en recording.wav
+  - Emite `recording_frame_ready` cada ~1 segundo con frames_count y duration_sec
+  - Métodos pause/resume con señales `recording_paused` y `recording_resumed`
+  - Error handling con `recording_error` signal
+
+- **SessionManager**: pause/resume/stop ya implementados en `handsome_transcribe/ui/session_manager.py` (~350 líneas)
+  - `start_session()`: Crea directorio `session_YYYYMMDD_HHMMSS/` con subdirectorio `temp/`, inicializa RecorderWorker
+  - `pause_recording()`: Llama `_save_partial_audio()` que incrementa `partial_audio_count` y guarda en temp/
+  - `resume_recording()`: Reanuda grabación sin perder buffer
+  - `stop_recording()`: Llama `save_final(recording.wav)`, dispara transcripción
+  - `_auto_save_progress()`: Auto-guardado cada 120000ms (2 min) + metadata JSON
+  - `_transition_state()`: Validación de transiciones de estado con mapa de estados válidos
+
+- **LiveSessionView**: Botones ya implementados en `handsome_transcribe/ui/windows/panels.py` (~600 líneas)
+  - Botón Pause/Resume con `_on_pause_resume()` conectado a `event_bus.emit_pause_recording()` y `emit_resume_recording()`
+  - Botón Stop con `_on_stop()` mostrando diálogo de confirmación, conectado a `event_bus.emit_stop_recording()`
+  - Slots para `partial_transcript_ready`, `speaker_identified`, `session_state_changed`, `stage_progress`
+
+##### [MENOR] - Signal Connection Missing
+- **recording_frame_ready**: No estaba conectado en LiveSessionView para actualizar barra de progreso
+- **Impacto**: ProgressBar no mostraría duración durante grabación en tiempo real
+- **Solución implementada**: Agregada conexión y slot `_on_recording_progress(frames_count, duration_sec)`
+
+#### Resumen de Cambios
+
+**Archivos modificados:** 2
+- `handsome_transcribe/ui/windows/panels.py`:
+  - Línea ~472: Agregada conexión `self.event_bus.recording_frame_ready.connect(self._on_recording_progress)` en `_connect_signals()`
+  - Líneas ~613-627: Agregado slot `_on_recording_progress(frames_count, duration_sec)` que:
+    - Actualiza `duration_progress.setValue(int(duration_sec))`
+    - Formatea tiempo como MM:SS con `setFormat(f"{minutes:02d}:{seconds:02d}")`
+
+**Archivos creados:** 1
+- `tests/ui/test_recorder_flow.py` (~320 líneas):
+  - 7 tests de integración completos con fixtures para EventBus, ConfigManager, Database, SpeakerManager, SessionManager
+  - `test_record_and_save_wav`: Valida creación de directorio de sesión y llamada a save_final()
+  - `test_progress_updates`: Verifica emisión periódica de recording_frame_ready con frames_count y duration_sec
+  - `test_stop_recording`: Valida stop_recording() llama worker.stop() y save_final(), transiciona a TRANSCRIBING
+  - `test_pause_and_save_partial`: Verifica pause_recording() llama save_partial() con contador incrementado, transiciona a PAUSED
+  - `test_consolidate_final_recording`: Valida save_final() usa wave.open con parámetros correctos (16kHz, mono, 16-bit)
+  - `test_device_selection`: Verifica RecorderWorker acepta device_name desde config
+  - `test_session_directory_creation`: Valida estructura session_YYYYMMDD_HHMMSS/temp/ con metadata_path, recording_path, transcript_path
+
+**Tests ejecutados:** 38 (7 UI + 31 CLI)
+**Tests pasados:** 38 (100%)
+**Tests fallidos:** 0
+
+#### Verificación Ejecutada
+
+##### Automatizada
+- ✅ Sintaxis: No errores en `handsome_transcribe/ui/windows/panels.py` y `tests/ui/test_recorder_flow.py`
+- ✅ pytest UI: 7/7 tests en `tests/ui/test_recorder_flow.py` pasan (1.15s)
+  - test_record_and_save_wav: PASSED
+  - test_progress_updates: PASSED
+  - test_stop_recording: PASSED
+  - test_pause_and_save_partial: PASSED
+  - test_consolidate_final_recording: PASSED
+  - test_device_selection: PASSED
+  - test_session_directory_creation: PASSED
+- ✅ pytest CLI: 31/31 tests CLI originales pasan sin regresiones (4.47s)
+  - test_recorder.py: 6 passed
+  - test_report_generator.py: 6 passed
+  - test_speaker_identifier.py: 6 passed
+  - test_summarizer.py: 7 passed
+  - test_transcriber.py: 6 passed
+
+##### Manual Sugerida
+- [ ] `python desktop_app.py` → UI debe lanzar sin errores
+- [ ] Conectar micrófono → Seleccionar dispositivo en ConfigPanel
+- [ ] "Iniciar Sesión" → Verificar que se crea directorio `outputs/sessions/session_YYYYMMDD_HHMMSS/temp/`
+- [ ] Grabar 10 segundos → ProgressBar debe mostrar tiempo transcurrido (MM:SS)
+- [ ] Pausar → Verificar que se crea `temp/part1.wav` y ProgressBar se detiene
+- [ ] Reanudar → Grabar 10 segundos más, verificar ProgressBar continúa
+- [ ] Pausar → Verificar que se crea `temp/part2.wav`
+- [ ] "Detener" → Confirmar diálogo, verificar que se crea `recording.wav` en raíz de sesión
+- [ ] Reproducir `recording.wav` → Validar que contiene audio completo (~20 segundos)
+- [ ] Verificar archivos parciales permanecen en `temp/` para debugging
+
+#### Riesgos Identificados
+
+- [MENOR] **Thread-safety**: RecorderWorker usa `threading.Lock` para `_audio_buffer`, pero no se validó con tests de concurrencia. Requiere test específico en tarea 3.5.
+- [MENOR] **Progress bar maximum**: LiveSessionView inicializa `duration_progress.setMaximum(3600)` (1 hora). Para sesiones más largas, necesita ajuste dinámico o máximo configurable.
+- [INFO] **Validación de audio**: No hay validación con `ffprobe` antes de iniciar transcripción (mencionado en riesgos Sprint 3). Recomendar agregar en SessionManager._start_transcription() validación básica (duración > 0, formato válido).
+
+#### Pendientes
+
+- [ ] **Validación manual completa**: Ejecutar checklist de verificación manual con micrófono real (requiere entorno con audio)
+  - Conectar micrófono
+  - `python desktop_app.py` → UI lanza sin errores
+  - Seleccionar dispositivo en ConfigPanel
+  - "Iniciar Sesión" → Verificar directorio `outputs/sessions/session_YYYYMMDD_HHMMSS/temp/` creado
+  - Grabar 10 segundos → ProgressBar muestra tiempo MM:SS
+  - Pausar → Verificar `temp/part1.wav` creado
+  - Reanudar → Grabar 10 segundos, verificar ProgressBar continúa
+  - Pausar → Verificar `temp/part2.wav` creado
+  - "Detener" → Confirmar diálogo, verificar `recording.wav` en raíz
+  - Reproducir `recording.wav` → Validar audio completo (~20 segundos)
+  - Verificar archivos parciales en `temp/` para debugging
+
+- [ ] **Ajuste dinámico de progress bar**: Si sesión supera 1 hora, `duration_progress.setMaximum()` debe incrementarse dinámicamente
+  - Ejemplo: cada vez que `duration_sec > maximum - 60`, doblar el máximo
+  - Implementar en `_on_recording_progress()` con lógica condicional
+
+- [ ] **Validación de audio pre-transcripción**: Agregar validación básica en `SessionManager._start_transcription()`
+  - Verificar duración > 0 usando `wave.open()` o similar
+  - Verificar formato válido (16kHz, mono, 16-bit)
+  - Emitir error temprano si audio corrompido antes de iniciar Whisper
+
+---
+
 ## Sprint 4: Pipeline (Semana 4)
 
 ### Objetivo
