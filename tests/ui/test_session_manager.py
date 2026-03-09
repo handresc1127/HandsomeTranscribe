@@ -20,9 +20,9 @@ class TestSessionManager:
     """Tests for SessionManager."""
     
     @pytest.fixture
-    def session_manager(self, temp_db, event_bus, speaker_manager, qapp):
+    def session_manager(self, temp_db, event_bus, speaker_manager, qapp, session_config):
         """Create SessionManager instance for testing."""
-        manager = SessionManager(temp_db, event_bus, speaker_manager)
+        manager = SessionManager(session_config, event_bus, temp_db, speaker_manager)
         yield manager
         # Cleanup
         if manager.auto_save_timer.isActive():
