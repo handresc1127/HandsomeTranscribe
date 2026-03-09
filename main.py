@@ -85,7 +85,7 @@ def transcribe(
         help="Do not save the transcript to disk.",
     ),
 ) -> None:
-    """Transcribe an audio file using OpenAI Whisper."""
+    """Transcribe an audio file using local Whisper."""
     from handsome_transcribe.transcription.whisper_transcriber import WhisperTranscriber  # noqa: PLC0415
 
     transcriber = WhisperTranscriber(model_name=model)

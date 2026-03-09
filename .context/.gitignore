@@ -1,0 +1,6 @@
+# Contexto efímero (NO versionar)
+tmp/*
+!tmp/.gitkeep
+
+# Sesiones personales (opcional)
+active/sessions/personal-*

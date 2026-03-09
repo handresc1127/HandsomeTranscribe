@@ -1,4 +1,4 @@
-"""Speech-to-text transcription using OpenAI Whisper.
+"""Speech-to-text transcription using local Whisper.
 
 Converts a WAV/MP3 audio file into a timestamped transcript.
 """
@@ -45,7 +45,7 @@ class Transcript:
 
 
 class WhisperTranscriber:
-    """Transcribes audio files using OpenAI Whisper."""
+    """Transcribes audio files using local Whisper."""
 
     def __init__(self, model_name: str = "base", output_dir: Path | None = None) -> None:
         """Initialise the transcriber.

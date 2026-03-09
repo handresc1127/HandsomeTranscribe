@@ -7,7 +7,7 @@ HandsomeTranscribe is a Python-based tool that records in-person meetings, autom
 ## Features
 
 - 🎙️ **Audio Recording** — capture microphone input (configurable duration or manual stop)
-- 📝 **Speech-to-Text** — accurate transcription via [OpenAI Whisper](https://github.com/openai/whisper)
+- 📝 **Speech-to-Text** — accurate local transcription via [Whisper](https://github.com/openai/whisper)
 - 👥 **Speaker Diarization** — label each segment by speaker using [pyannote.audio](https://github.com/pyannote/pyannote-audio)
 - 📋 **Meeting Summarization** — extract summary, key topics, action items, and decisions
 - 📄 **Report Generation** — export reports as Markdown, JSON, and PDF
@@ -46,6 +46,23 @@ HandsomeTranscribe/
 
 - Python 3.10+
 - [ffmpeg](https://ffmpeg.org/) installed and on your `PATH`
+
+---
+
+## Cost Strategy
+
+This is a public-use project and is designed to prioritize free or low-cost tools.
+
+- Prefer local, open-source Python workflows by default
+- Current runtime mode is local-only (no paid cloud STT providers enabled)
+- Use lightweight/default models first, then scale up only if needed
+- Future cloud integrations (OpenAI API, Google, Azure, AWS) are roadmap items and disabled for now
+
+### Runtime Provider Policy
+
+- Active provider today: local Whisper only
+- Not active in runtime: OpenAI API, Google Speech-to-Text, Azure Speech, AWS Transcribe
+- Any future cloud provider must be opt-in and documented before release
 
 ---
 
