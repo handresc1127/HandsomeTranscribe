@@ -231,7 +231,9 @@ class TranscriberWorker(QRunnable):
         audio_path: Path,
         output_path: Path,
         model_name: str = "base",
-        language: Optional[str] = None
+        language: Optional[str] = None,
+        emit_progress: bool = True,
+        emit_complete: bool = True
     ):
         """
         Initialize transcriber worker.
@@ -249,6 +251,8 @@ class TranscriberWorker(QRunnable):
         self.output_path = output_path
         self.model_name = model_name
         self.language = language
+        self.emit_progress = emit_progress
+        self.emit_complete = emit_complete
     
     def run(self):
         """Execute transcription in background thread."""
@@ -257,11 +261,13 @@ class TranscriberWorker(QRunnable):
             import whisper
             
             # Load model
-            self.event_bus.emit_stage_progress("Transcribing", 25)
+            if self.emit_progress:
+                self.event_bus.emit_stage_progress("Transcribing", 25)
             model = whisper.load_model(self.model_name)
             
             # Transcribe audio
-            self.event_bus.emit_stage_progress("Transcribing", 50)
+            if self.emit_progress:
+                self.event_bus.emit_stage_progress("Transcribing", 50)
             result = model.transcribe(
                 str(self.audio_path),
                 language=self.language,
@@ -269,7 +275,8 @@ class TranscriberWorker(QRunnable):
             )
             
             # Process segments
-            self.event_bus.emit_stage_progress("Transcribing", 75)
+            if self.emit_progress:
+                self.event_bus.emit_stage_progress("Transcribing", 75)
             segments = []
             for seg in result.get("segments", []):
                 segment = TranscriptSegmentData(
@@ -284,9 +291,11 @@ class TranscriberWorker(QRunnable):
             self._save_transcript(segments)
             
             # Emit completion
-            self.event_bus.emit_stage_progress("Transcribing", 100)
+            if self.emit_progress:
+                self.event_bus.emit_stage_progress("Transcribing", 100)
             self.event_bus.emit_partial_transcript(segments)
-            self.event_bus.emit_transcription_complete(result)
+            if self.emit_complete:
+                self.event_bus.emit_transcription_complete(result)
         
         except Exception as e:
             self.event_bus.emit_transcription_error(f"Transcription failed: {str(e)}")

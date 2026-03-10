@@ -70,6 +70,7 @@ class SessionManager(QObject):
         # Worker references
         self.recorder_worker: Optional[RecorderWorker] = None
         self.transcriber_worker: Optional[TranscriberWorker] = None
+        self.partial_transcriber_worker: Optional[TranscriberWorker] = None
         
         # Thread pool for workers
         self._thread_pool = QThreadPool.globalInstance()
@@ -85,6 +86,11 @@ class SessionManager(QObject):
         # Ensure output directories exist
         SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
         REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+        
+        # Connect to event bus signals for user interactions
+        self.event_bus.pause_recording_requested.connect(self.pause_recording)
+        self.event_bus.resume_recording_requested.connect(self.resume_recording)
+        self.event_bus.stop_recording_requested.connect(self.stop_recording)
     
     def start_session(self) -> SessionData:
         """
@@ -156,8 +162,8 @@ class SessionManager(QObject):
         # Start auto-save timer
         self._start_autosave_timer()
         
-        # Emit event
-        self.event_bus.emit_session_started(session_data.id)
+        # Emit event as string payload expected by EventBus
+        self.event_bus.emit_session_started(str(session_data.id))
         
         return session_data
     
@@ -181,7 +187,9 @@ class SessionManager(QObject):
         self.recorder_worker.pause()
         
         # Save partial audio
-        self._save_partial_audio()
+        partial_audio_path = self._save_partial_audio()
+        if partial_audio_path:
+            self._start_partial_transcription(partial_audio_path)
         
         # Trigger auto-save
         self._auto_save_progress()
@@ -335,16 +343,17 @@ class SessionManager(QObject):
         
         return session_dir
     
-    def _save_partial_audio(self):
-        """Save partial audio to temp directory."""
+    def _save_partial_audio(self) -> Optional[Path]:
+        """Save partial audio to temp directory and return the file path."""
         if not self.current_session or not self.recorder_worker:
-            return
+            return None
         
         self.current_session.partial_audio_count += 1
         self.recorder_worker.save_partial(
             self.current_session.temp_dir,
             self.current_session.partial_audio_count
         )
+        return self.current_session.temp_dir / f"part{self.current_session.partial_audio_count}.wav"
     
     def _auto_save_progress(self):
         """
@@ -434,6 +443,24 @@ class SessionManager(QObject):
         self.event_bus.transcription_complete.connect(self._on_transcription_complete, Qt.ConnectionType.QueuedConnection)
         
         self._thread_pool.start(self.transcriber_worker)
+
+    def _start_partial_transcription(self, partial_audio_path: Path):
+        """Start partial transcription without advancing the pipeline."""
+        if not self.current_session:
+            return
+        if not partial_audio_path.exists():
+            return
+
+        output_path = self.current_session.temp_dir / f"partial_{partial_audio_path.stem}.txt"
+        self.partial_transcriber_worker = TranscriberWorker(
+            event_bus=self.event_bus,
+            audio_path=partial_audio_path,
+            output_path=output_path,
+            model_name=self.config.modelo_whisper,
+            emit_progress=False,
+            emit_complete=False
+        )
+        self._thread_pool.start(self.partial_transcriber_worker)
     
     def _start_diarization(self):
         """Start diarization worker if enabled."""
@@ -516,8 +543,10 @@ class SessionManager(QObject):
             "summary_path": str(self.current_session.summary_path) if self.current_session.summary_path else None,
             "session_dir": str(self.current_session.session_dir)
         }
-        
-        self.event_bus.emit_session_completed(results)
+
+        session_info_json = json.dumps({"session_id": self.current_session.id})
+        result_json = json.dumps(results)
+        self.event_bus.emit_session_completed(session_info_json, result_json)
         
         # Reset for next session
         self.current_session = None

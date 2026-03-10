@@ -39,7 +39,7 @@ class TestSpeakerManager:
             name="Test Speaker",
             voice_embedding_blob=embedding1.tobytes()
         )
-        speaker_id = speaker_manager.db.create_speaker(speaker)
+        speaker_id = speaker_manager.database.create_speaker(speaker)
         
         # Create very similar embedding (98%+ match)
         embedding2 = embedding1 + np.random.randn(128).astype(np.float32) * 0.01
@@ -63,7 +63,7 @@ class TestSpeakerManager:
             name="Test Speaker",
             voice_embedding_blob=embedding1.tobytes()
         )
-        speaker_id = speaker_manager.db.create_speaker(speaker)
+        speaker_id = speaker_manager.database.create_speaker(speaker)
         
         # Create somewhat similar embedding (60-98% range)
         embedding2 = embedding1 + np.random.randn(128).astype(np.float32) * 0.3
@@ -85,28 +85,28 @@ class TestSpeakerManager:
             name="Test Speaker",
             voice_embedding_blob=embedding1.tobytes()
         )
-        speaker_id = speaker_manager.db.create_speaker(speaker)
+        speaker_id = speaker_manager.database.create_speaker(speaker)
         
         # Enrich with new embedding
         embedding2 = np.random.randn(128).astype(np.float32)
         speaker_manager.enrich_embedding(speaker_id, embedding2)
         
         # Retrieve updated speaker
-        updated_speaker = speaker_manager.db.get_speaker(speaker_id)
+        updated_speaker = speaker_manager.database.get_speaker(speaker_id)
         
         # Embedding should have changed (averaged)
         assert updated_speaker.voice_embedding_blob != embedding1.tobytes()
     
     def test_generate_avatar(self, speaker_manager):
         """Test avatar generation from name."""
-        avatar = speaker_manager.generate_avatar("John Doe")
+        avatar = speaker_manager._generate_avatar_path("John Doe")
         
         assert avatar.startswith("JD:")
         assert "#" in avatar  # Should have color code
     
     def test_generate_avatar_single_name(self, speaker_manager):
         """Test avatar generation with single name."""
-        avatar = speaker_manager.generate_avatar("Madonna")
+        avatar = speaker_manager._generate_avatar_path("Madonna")
         
         assert avatar.startswith("MA:")
     

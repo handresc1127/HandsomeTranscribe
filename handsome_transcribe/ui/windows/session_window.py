@@ -16,7 +16,7 @@ from datetime import datetime
 
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QTabWidget,
-    QStatusBar, QMenuBar, QMenu, QMessageBox
+    QStatusBar, QMenuBar, QMenu, QMessageBox, QApplication
 )
 from PySide6.QtCore import Qt, QTimer, Slot
 from PySide6.QtGui import QIcon, QAction
@@ -60,6 +60,12 @@ class SessionWindow(QMainWindow):
         # Initialize backend services
         logger.debug("Initializing backend services")
         self.db = Database()
+        recovered_sessions = self.db.recover_stale_active_sessions()
+        if recovered_sessions > 0:
+            logger.warning(
+                "Recovered %s stale active session(s) from previous run",
+                recovered_sessions,
+            )
         self.event_bus = EventBus()
         self.speaker_manager = SpeakerManager(self.db)
         self.config_manager = ConfigManager()
@@ -374,6 +380,12 @@ class SessionWindow(QMainWindow):
                 self.db,
                 self.speaker_manager
             )
+            
+            # Start the session
+            self.session_manager.start_session()
+            
+            # Process pending Qt events to ensure signals are handled immediately
+            QApplication.processEvents()
             
             # Switch to live session tab
             self.tab_widget.setCurrentWidget(self.live_session_view)

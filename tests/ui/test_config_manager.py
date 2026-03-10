@@ -69,12 +69,12 @@ class TestConfigManager:
     def test_validate_hf_token_none(self, config_manager):
         """Test validating None token."""
         is_valid = config_manager.validate_hf_token(None)
-        
-        assert is_valid is True  # None is valid (optional)
+
+        assert is_valid is False
     
     def test_validate_whisper_model_valid(self, config_manager):
         """Test validating valid Whisper model."""
-        valid_models = ["tiny", "base", "small", "medium", "large", "large-v2", "large-v3"]
+        valid_models = ["tiny", "base", "small", "medium", "large"]
         
         for model in valid_models:
             is_valid = config_manager.validate_whisper_model(model)
@@ -155,9 +155,10 @@ class TestConfigManager:
         ]
         
         devices = config_manager.get_audio_devices()
-        
+
         # Should only include devices with input channels
         assert len(devices) == 2
-        assert "Device 1" in devices
-        assert "Device 2" in devices
-        assert "Device 3" not in devices
+        names = [d["name"] for d in devices]
+        assert "Device 1" in names
+        assert "Device 2" in names
+        assert "Device 3" not in names

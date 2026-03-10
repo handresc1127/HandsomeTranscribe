@@ -29,24 +29,24 @@ class TestRecorderWorker:
         
         assert worker is not None
         assert worker.sample_rate == 16000
-        assert worker.is_recording is False
+        assert worker._recording is False
     
     def test_pause_and_resume(self, event_bus):
         """Test pausing and resuming recorder."""
         worker = RecorderWorker(event_bus)
         
         worker.pause()
-        assert worker.is_paused is True
+        assert worker._paused is True
         
         worker.resume()
-        assert worker.is_paused is False
+        assert worker._paused is False
     
     def test_stop_recording(self, event_bus):
         """Test stopping the recorder."""
         worker = RecorderWorker(event_bus)
         
         worker.stop()
-        assert worker.is_recording is False
+        assert worker._recording is False
 
 
 class TestTranscriberWorker:
@@ -57,6 +57,7 @@ class TestTranscriberWorker:
         worker = TranscriberWorker(
             event_bus=event_bus,
             audio_path=Path("test.wav"),
+            output_path=Path("transcript.txt"),
             model_name="base",
             language=None
         )
@@ -74,6 +75,7 @@ class TestSpeakerEmbeddingWorker:
         worker = SpeakerEmbeddingWorker(
             event_bus=event_bus,
             audio_chunk=np.zeros(16000, dtype=np.float32),
+            chunk_id=1,
             sample_rate=16000
         )
         
@@ -103,11 +105,12 @@ class TestSummarizerWorker:
         """Test creating a SummarizerWorker instance."""
         worker = SummarizerWorker(
             event_bus=event_bus,
-            transcript="Test transcript text"
+            transcript_path=Path("transcript.txt"),
+            output_path=Path("summary.md")
         )
         
         assert worker is not None
-        assert worker.transcript == "Test transcript text"
+        assert worker.transcript_json_path == Path("transcript.json")
 
 
 class TestReporterWorker:
@@ -115,27 +118,12 @@ class TestReporterWorker:
     
     def test_create_reporter_worker(self, event_bus):
         """Test creating a ReporterWorker instance."""
-        config = SessionConfig()
-        session_data = SessionData(
-            id=1,
-            created_at=datetime.now(),
-            session_dir=Path("outputs/sessions/test"),
-            recording_path=Path("outputs/sessions/test/recording.wav"),
-            transcript_path=Path("outputs/sessions/test/transcript.txt"),
-            summary_path=None,
-            metadata_path=Path("outputs/sessions/test/metadata.json"),
-            temp_dir=Path("outputs/sessions/test/temp"),
-            config=config,
-            state=SessionState.COMPLETED
-        )
-        
         worker = ReporterWorker(
             event_bus=event_bus,
-            session_data=session_data,
-            transcript_text="Test transcript",
-            summary_text=None,
-            speakers=[]
+            session_dir=Path("outputs/sessions/test"),
+            session_id=1,
+            reports_dir=Path("outputs/reports")
         )
         
         assert worker is not None
-        assert worker.session_data.id == 1
+        assert worker.session_id == 1

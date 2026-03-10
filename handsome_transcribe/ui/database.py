@@ -258,6 +258,32 @@ class Database:
                 return None
             
             return self._row_to_session_data(row)
+
+    def recover_stale_active_sessions(self) -> int:
+        """
+        Mark stale active sessions as ERROR.
+
+        This recovery is intended for app startup after an unclean shutdown
+        where sessions remained in RECORDING/PAUSED state in the database.
+
+        Returns:
+            Number of recovered sessions
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                UPDATE sessions
+                SET state = ?
+                WHERE state IN (?, ?)
+                """,
+                (
+                    SessionState.ERROR.value,
+                    SessionState.RECORDING.value,
+                    SessionState.PAUSED.value,
+                ),
+            )
+            return cursor.rowcount
     
     def delete_session(self, session_id: int):
         """

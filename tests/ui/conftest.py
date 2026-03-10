@@ -4,6 +4,7 @@ Pytest configuration and fixtures for UI tests.
 
 import pytest
 import tempfile
+import shutil
 from pathlib import Path
 from PySide6.QtWidgets import QApplication
 
@@ -111,3 +112,15 @@ def config_manager(qapp):
     yield manager
     # Cleanup
     manager.clear_settings()
+
+
+@pytest.fixture
+def sample_recording_path(tmp_path: Path) -> Path:
+    """Copy a real recording.wav into a temp path for unit tests."""
+    source = Path("outputs/sessions/session_20260309_233252/recording.wav")
+    if not source.exists():
+        pytest.skip("Sample recording.wav not found in outputs/sessions")
+
+    dest = tmp_path / "recording.wav"
+    shutil.copyfile(source, dest)
+    return dest

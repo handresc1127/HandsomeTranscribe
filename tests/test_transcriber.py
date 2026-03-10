@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -87,3 +89,21 @@ class TestWhisperTranscriber:
         assert loaded.language == sample_transcript.language
         assert len(loaded.segments) == len(sample_transcript.segments)
         assert loaded.segments[0].text == sample_transcript.segments[0].text
+
+    def test_transcribe_real_recording(self) -> None:
+        """Transcribe a real recording.wav when explicitly enabled."""
+        if os.environ.get("HT_RUN_REAL_AUDIO_TEST") != "1":
+            pytest.skip("Set HT_RUN_REAL_AUDIO_TEST=1 to run this test")
+
+        if shutil.which("ffmpeg") is None:
+            pytest.skip("ffmpeg not found in PATH")
+
+        audio_path = Path("outputs/sessions/session_20260309_233252/recording.wav")
+        if not audio_path.exists():
+            pytest.skip("Sample recording.wav not found in outputs/sessions")
+
+        output_dir = Path("outputs/transcripts")
+        transcriber = WhisperTranscriber(model_name="tiny", output_dir=output_dir)
+        transcript = transcriber.transcribe(audio_path, save=True)
+
+        assert transcript.full_text.strip()

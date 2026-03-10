@@ -83,37 +83,34 @@ class TestPipelineFullFlow:
             assert session_manager.current_state == SessionState.RECORDING
             assert SessionState.RECORDING.value in state_changes
             
-            # Simulate recording completion
-            recording_path = tmp_path / "sessions" / "session_001" / "recording.wav"
-            recording_path.parent.mkdir(parents=True, exist_ok=True)
-            recording_path.write_text("fake audio")
-            
-            event_bus.emit_recording_stopped(str(recording_path))
+            # Simulate recording completion by calling manager API
+            session_manager.recorder_worker = MagicMock()
+            session_manager.stop_recording()
             
             # Should transition to TRANSCRIBING
             assert session_manager.current_state == SessionState.TRANSCRIBING
             assert SessionState.TRANSCRIBING.value in state_changes
             
-            # Simulate transcription completion
+            # Simulate transcription completion callback
             mock_transcript = {
                 "text": "Test transcript",
                 "segments": [{"start": 0, "end": 5, "text": "Test"}]
             }
-            event_bus.emit_transcription_complete(mock_transcript)
+            session_manager._on_transcription_complete(mock_transcript)
             
             # Should transition to DIARIZING
             assert session_manager.current_state == SessionState.DIARIZING
             assert SessionState.DIARIZING.value in state_changes
             
-            # Simulate diarization completion
+            # Simulate diarization completion callback
             speaker_map = {"0.0-5.0": "SPEAKER_00"}
-            event_bus.emit_speaker_update(speaker_map)
+            session_manager._on_diarization_complete(speaker_map)
             
             # Should transition to SUMMARIZING
             assert session_manager.current_state == SessionState.SUMMARIZING
             assert SessionState.SUMMARIZING.value in state_changes
             
-            # Simulate summarization completion
+            # Simulate summarization completion callback
             from handsome_transcribe.summarization.meeting_summarizer import MeetingSummary
             mock_summary = MeetingSummary(
                 summary="Test summary",
@@ -121,16 +118,15 @@ class TestPipelineFullFlow:
                 action_items=["Action 1"],
                 decisions=["Decision 1"]
             )
-            event_bus.emit_summarization_complete(mock_summary)
+            session_manager._on_summarization_complete(mock_summary)
             
-            # Should start reporting (no specific state for reporting)
-            # Simulate reports ready
+            # Simulate reports ready callback
             reports = {
                 "markdown": str(tmp_path / "report.md"),
                 "json": str(tmp_path / "report.json"),
                 "pdf": str(tmp_path / "report.pdf")
             }
-            event_bus.emit_reports_ready(reports)
+            session_manager._on_reports_ready(reports)
             
             # Should transition to COMPLETED
             assert session_manager.current_state == SessionState.IDLE
@@ -160,9 +156,11 @@ class TestPipelineFullFlow:
                  patch('handsome_transcribe.ui.session_manager.ReporterWorker'):
                 
                 session_manager.start_session()
+                session_manager.recorder_worker = MagicMock()
+                session_manager.stop_recording()
                 
-                # Simulate transcription completion
-                event_bus.emit_transcription_complete({"text": "Test"})
+                # Simulate transcription completion callback
+                session_manager._on_transcription_complete({"text": "Test"})
                 
                 # Should skip DIARIZING and go directly to SUMMARIZING
                 assert session_manager.current_state == SessionState.SUMMARIZING
@@ -193,6 +191,8 @@ class TestPipelineFullFlow:
                  patch('handsome_transcribe.ui.session_manager.ReporterWorker'):
                 
                 session_manager.start_session()
+                session_manager.recorder_worker = MagicMock()
+                session_manager.stop_recording()
                 
                 # Simulate transcription completion
                 event_bus.emit_transcription_complete({"text": "Test"})

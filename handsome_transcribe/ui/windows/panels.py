@@ -381,7 +381,7 @@ class ConfigPanel(QWidget):
     def _on_session_state_changed(self, state: str):
         """Slot: session state changed."""
         try:
-            session_state = SessionState[state]
+            session_state = SessionState(state)
             is_active = session_state in [SessionState.RECORDING, SessionState.PAUSED]
             self._has_active_session = is_active
             
@@ -543,8 +543,12 @@ class LiveSessionView(QWidget):
     def _on_partial_transcript(self, segments: list):
         """Slot: partial transcript ready."""
         for segment in segments:
-            text = segment.get("text", "")
-            speaker_id = segment.get("speaker_id")
+            if isinstance(segment, dict):
+                text = segment.get("text", "")
+                speaker_id = segment.get("speaker_id")
+            else:
+                text = getattr(segment, "text", "")
+                speaker_id = getattr(segment, "speaker_id", None)
             
             if text:
                 if speaker_id and speaker_id in self._current_speakers:
@@ -574,7 +578,7 @@ class LiveSessionView(QWidget):
     def _on_state_changed(self, state: str):
         """Slot: session state changed."""
         try:
-            session_state = SessionState[state]
+            session_state = SessionState(state)
             
             if session_state == SessionState.RECORDING:
                 self.pause_button.setText("Pause")
