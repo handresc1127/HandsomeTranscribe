@@ -14,6 +14,7 @@ from PySide6.QtCore import QSettings, QStandardPaths
 from .models import SessionConfig
 from .exceptions import ConfigurationError
 from .constants import WHISPER_MODELS, DEFAULT_WHISPER_MODEL
+from .logger import AppLogger
 
 
 class ConfigManager:
@@ -101,6 +102,7 @@ class ConfigManager:
             ]
         """
         try:
+            logger = AppLogger.get_logger("ui.config_manager")
             devices = sd.query_devices()
             input_devices = []
             
@@ -109,13 +111,21 @@ class ConfigManager:
                 if device.get("max_input_channels", 0) > 0:
                     input_devices.append({
                         "index": idx,
-                        "name": device["name"],
-                        "max_input_channels": device["max_input_channels"],
-                        "default_samplerate": device["default_samplerate"]
+                        "name": device.get("name", f"Unknown Device {idx}"),
+                        "hostapi": device.get("hostapi"),
+                        "max_input_channels": device.get("max_input_channels", 0),
+                        "default_samplerate": device.get("default_samplerate", 44100)
                     })
             
+            logger.info(
+                "Audio input devices detected: %s of %s total",
+                len(input_devices),
+                len(devices)
+            )
             return input_devices
         except Exception as e:
+            logger = AppLogger.get_logger("ui.config_manager")
+            logger.error("Failed to query audio devices: %s", e)
             raise ConfigurationError(f"Failed to query audio devices: {e}") from e
     
     def get_default_audio_device(self) -> Optional[Dict[str, any]]:

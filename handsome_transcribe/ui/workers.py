@@ -16,6 +16,8 @@ import time
 from .event_bus import EventBus
 from .models import TranscriptSegmentData
 from .constants import AUDIO_CHUNK_DURATION_SEC
+from .logger import AppLogger
+from .config_manager import ConfigManager
 
 
 class WorkerSignals(QObject):
@@ -70,16 +72,29 @@ class RecorderWorker(QRunnable):
     def run(self):
         """Execute recording in background thread."""
         try:
+            logger = AppLogger.get_logger("ui.workers.recorder")
             self._recording = True
             
             # Determine device index
             device_idx = None
             if self.device_name:
-                devices = sd.query_devices()
-                for idx, device in enumerate(devices):
+                devices = ConfigManager().get_audio_devices()
+                for device in devices:
                     if device["name"] == self.device_name:
-                        device_idx = idx
+                        device_idx = device["index"]
+                        logger.info(
+                            "Resolved audio device '%s' to index %s",
+                            self.device_name,
+                            device_idx
+                        )
                         break
+                if device_idx is None:
+                    logger.warning(
+                        "Audio device '%s' not found. Using default input device.",
+                        self.device_name
+                    )
+            else:
+                logger.info("No audio device selected. Using default input device.")
             
             # Record audio until stopped
             with sd.InputStream(
@@ -100,6 +115,8 @@ class RecorderWorker(QRunnable):
                         )
         
         except Exception as e:
+            logger = AppLogger.get_logger("ui.workers.recorder")
+            logger.error("Recording failed: %s", e)
             self.event_bus.emit_recording_error(f"Recording failed: {str(e)}")
     
     def _audio_callback(self, indata, frames, time_info, status):

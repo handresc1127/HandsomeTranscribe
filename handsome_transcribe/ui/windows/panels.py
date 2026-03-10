@@ -100,6 +100,7 @@ class ConfigPanel(QWidget):
         
         audio_layout.addWidget(QLabel("Audio Device:"))
         self.device_combo = QComboBox()
+        self._device_info = []
         self._load_audio_devices()
         audio_layout.addWidget(self.device_combo)
         
@@ -204,12 +205,72 @@ class ConfigPanel(QWidget):
         """Load audio devices into combo box."""
         try:
             devices = self.config_manager.get_audio_devices()
+            default_device = self.config_manager.get_default_audio_device()
+
+            logger.info("Audio devices debug start")
+            logger.info("Total devices detected: %s", len(devices))
+            logger.info(
+                "Default device: %s",
+                default_device.get("name") if default_device else "None",
+            )
+
             if devices:
-                self.device_combo.addItems(devices)
+                if default_device and default_device.get("hostapi") is not None:
+                    logger.info(
+                        "Filtering by hostapi: %s",
+                        default_device.get("hostapi"),
+                    )
+                    filtered_devices = [
+                        device for device in devices
+                        if device.get("hostapi") == default_device["hostapi"]
+                    ]
+                    logger.info("Devices after filtering: %s", len(filtered_devices))
+                    if filtered_devices:
+                        devices = filtered_devices
+
+                logger.info("Devices to show in combo:")
+                for idx, device in enumerate(devices):
+                    logger.info(
+                        "  [%s] %s (hostapi: %s)",
+                        idx,
+                        device.get("name"),
+                        device.get("hostapi"),
+                    )
+
+                device_names = [device["name"] for device in devices]
+                self.device_combo.clear()
+                self.device_combo.addItems(device_names)
+                self._device_info = devices
+
+                if default_device:
+                    selected_name = default_device.get("name")
+                else:
+                    selected_name = None
+
+                if selected_name:
+                    default_index = self.device_combo.findText(selected_name)
+                    if default_index >= 0:
+                        self.device_combo.setCurrentIndex(default_index)
+                        logger.info(
+                            "Selected device at index %s: %s",
+                            default_index,
+                            selected_name,
+                        )
+                    elif device_names:
+                        self.device_combo.setCurrentIndex(0)
+                        logger.info(
+                            "Selected first device as fallback: %s",
+                            device_names[0],
+                        )
+                logger.info("Audio devices debug end")
             else:
+                self.device_combo.clear()
                 self.device_combo.addItem("Default Device")
+                self._device_info = []
         except Exception as e:
+            self.device_combo.clear()
             self.device_combo.addItem(f"Error: {str(e)[:50]}")
+            self._device_info = []
     
     def _load_saved_config(self):
         """Load saved configuration into form."""
