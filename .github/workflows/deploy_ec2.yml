@@ -1,0 +1,132 @@
+name: Deploy Green-POS to EC2
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      app_dir:
+        description: "Directorio de la app en EC2"
+        required: true
+        default: "/home/ec2-user/green-pos"
+      service_name:
+        description: "Nombre del servicio systemd"
+        required: true
+        default: "greenpos"
+
+concurrency:
+  group: deploy-ec2-main
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Start SSH agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.EC2_SSH_KEY }}
+
+      - name: Add EC2 host to known_hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -p "${{ secrets.EC2_PORT }}" -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Sync project files to EC2
+        run: |
+          APP_DIR="${{ github.event.inputs.app_dir || '/home/ec2-user/green-pos' }}"
+          rsync -az --delete \
+            --exclude ".git" \
+            --exclude ".github" \
+            --exclude "__pycache__" \
+            --exclude ".pytest_cache" \
+            --exclude "*.pyc" \
+            --exclude ".venv" \
+            --exclude "instance/*.db" \
+            -e "ssh -p ${{ secrets.EC2_PORT }}" \
+            ./ "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:${APP_DIR}/"
+
+      - name: Install dependencies and restart service
+        run: |
+          APP_DIR="${{ github.event.inputs.app_dir || '/home/ec2-user/green-pos' }}"
+          SERVICE_NAME="${{ github.event.inputs.service_name || 'greenpos' }}"
+
+          ssh -p "${{ secrets.EC2_PORT }}" "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" << EOF
+          set -e
+
+          cd "${APP_DIR}"
+
+          if ! command -v python3 >/dev/null 2>&1; then
+            if command -v dnf >/dev/null 2>&1; then
+              sudo dnf install -y python3
+            elif command -v yum >/dev/null 2>&1; then
+              sudo yum install -y python3
+            elif command -v apt-get >/dev/null 2>&1; then
+              sudo apt-get update
+              sudo apt-get install -y python3 python3-venv
+            fi
+          fi
+
+          if ! command -v nginx >/dev/null 2>&1; then
+            if command -v dnf >/dev/null 2>&1; then
+              sudo dnf install -y nginx
+            elif command -v yum >/dev/null 2>&1; then
+              sudo yum install -y nginx
+            elif command -v apt-get >/dev/null 2>&1; then
+              sudo apt-get update
+              sudo apt-get install -y nginx
+            fi
+          fi
+
+          if [ ! -d ".venv" ]; then
+            python3 -m venv .venv
+          fi
+
+          . .venv/bin/activate
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install gunicorn
+
+          if [ -f "deploy/start_gunicorn.sh" ]; then
+            chmod +x deploy/start_gunicorn.sh
+          fi
+
+          if [ -f "deploy/greenpos.service" ]; then
+            sudo cp deploy/greenpos.service "/etc/systemd/system/${SERVICE_NAME}.service"
+            sudo systemctl enable "${SERVICE_NAME}"
+          fi
+
+          if [ -f "deploy/nginx_greenpos.conf" ]; then
+            if [ -d "/etc/nginx/conf.d" ]; then
+              sudo mkdir -p /etc/nginx/conf.d
+              sudo cp deploy/nginx_greenpos.conf /etc/nginx/conf.d/greenpos.conf
+            elif [ -d "/etc/nginx/sites-available" ]; then
+              sudo mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled
+              sudo cp deploy/nginx_greenpos.conf /etc/nginx/sites-available/greenpos.conf
+              sudo ln -sf /etc/nginx/sites-available/greenpos.conf /etc/nginx/sites-enabled/greenpos.conf
+            else
+              echo "[ERROR] Nginx config path not found"
+              exit 1
+            fi
+            sudo nginx -t
+            sudo systemctl enable nginx
+            sudo systemctl restart nginx
+          fi
+
+          sudo systemctl daemon-reload
+          sudo systemctl restart "${SERVICE_NAME}"
+          sudo systemctl status "${SERVICE_NAME}" --no-pager -l
+          EOF
+
+      - name: Deployment summary
+        run: |
+          echo "## Deploy completado" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Host: ${{ secrets.EC2_HOST }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- User: ${{ secrets.EC2_USER }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Puerto SSH: ${{ secrets.EC2_PORT }}" >> "$GITHUB_STEP_SUMMARY"
