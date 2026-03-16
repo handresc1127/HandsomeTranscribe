@@ -257,6 +257,8 @@ class TranscriberWorker(QRunnable):
     def run(self):
         """Execute transcription in background thread."""
         try:
+            logger = AppLogger.get_logger("ui.workers.transcriber")
+            logger.debug(f"TranscriberWorker.run() started: audio={self.audio_path}, model={self.model_name}, lang={self.language}")
             # Import here to avoid loading Whisper at module import time
             import whisper
             
@@ -264,6 +266,7 @@ class TranscriberWorker(QRunnable):
             if self.emit_progress:
                 self.event_bus.emit_stage_progress("Transcribing", 25)
             model = whisper.load_model(self.model_name)
+            logger.debug(f"Whisper model '{self.model_name}' loaded")
             
             # Transcribe audio
             if self.emit_progress:
@@ -273,6 +276,7 @@ class TranscriberWorker(QRunnable):
                 language=self.language,
                 verbose=False
             )
+            logger.debug(f"Transcription finished: {len(result.get('segments', []))} segments")
             
             # Process segments
             if self.emit_progress:
@@ -298,6 +302,8 @@ class TranscriberWorker(QRunnable):
                 self.event_bus.emit_transcription_complete(result)
         
         except Exception as e:
+            logger = AppLogger.get_logger("ui.workers.transcriber")
+            logger.error(f"TranscriberWorker failed: {e}")
             self.event_bus.emit_transcription_error(f"Transcription failed: {str(e)}")
     
     def _save_transcript(self, segments: List[TranscriptSegmentData]):
@@ -325,7 +331,7 @@ class TranscriberWorker(QRunnable):
                     "start": seg.start_time,
                     "end": seg.end_time,
                     "text": seg.text,
-                    "speaker": getattr(seg, 'speaker_id', 'Unknown')
+                    "speaker": str(seg.speaker_id) if seg.speaker_id is not None else "Unknown"
                 }
                 for seg in segments
             ]
@@ -424,6 +430,8 @@ class DiarizerWorker(QRunnable):
     def run(self):
         """Execute diarization in background thread."""
         try:
+            logger = AppLogger.get_logger("ui.workers.diarizer")
+            logger.debug(f"DiarizerWorker.run() started: audio={self.audio_path}")
             # Import here to avoid loading pyannote at module import time
             from pyannote.audio import Pipeline
             
@@ -450,9 +458,12 @@ class DiarizerWorker(QRunnable):
                 speaker_map[segment_key] = speaker
             
             self.event_bus.emit_stage_progress("Diarizing", 100)
+            logger.debug(f"Diarization finished: {len(speaker_map)} segments")
             self.event_bus.emit_speaker_update(speaker_map)
         
         except Exception as e:
+            logger = AppLogger.get_logger("ui.workers.diarizer")
+            logger.error(f"DiarizerWorker failed: {e}")
             self.event_bus.emit_session_error(f"Diarization failed: {str(e)}", "diarization")
 
 
@@ -489,6 +500,8 @@ class SummarizerWorker(QRunnable):
     def run(self):
         """Execute summarization in background thread."""
         try:
+            logger = AppLogger.get_logger("ui.workers.summarizer")
+            logger.debug(f"SummarizerWorker.run() started: transcript={self.transcript_json_path}")
             import json
             from handsome_transcribe.summarization.meeting_summarizer import MeetingSummarizer
             from handsome_transcribe.transcription.whisper_transcriber import Transcript, TranscriptSegment
@@ -505,7 +518,7 @@ class SummarizerWorker(QRunnable):
                     start=seg["start"],
                     end=seg["end"],
                     text=seg["text"],
-                    speaker=seg.get("speaker", "Unknown")
+                    speaker=seg.get("speaker") or "Unknown"
                 )
                 for seg in transcript_data["segments"]
             ]
@@ -531,10 +544,13 @@ class SummarizerWorker(QRunnable):
                 f.write(markdown_content)
             
             self.event_bus.emit_stage_progress("Summarizing", 100)
+            logger.debug("Summarization finished")
             # Emit completion signal with summary object
             self.event_bus.emit_summarization_complete(summary)
         
         except Exception as e:
+            logger = AppLogger.get_logger("ui.workers.summarizer")
+            logger.error(f"SummarizerWorker failed: {e}")
             self.event_bus.emit_session_error(f"Summarization failed: {str(e)}", "summarization")
     
     def _format_summary_markdown(self, summary) -> str:
@@ -602,6 +618,8 @@ class ReporterWorker(QRunnable):
     def run(self):
         """Execute report generation in background thread."""
         try:
+            logger = AppLogger.get_logger("ui.workers.reporter")
+            logger.debug(f"ReporterWorker.run() started: session_dir={self.session_dir}")
             import json
             from handsome_transcribe.reporting.report_generator import ReportGenerator
             from handsome_transcribe.summarization.meeting_summarizer import MeetingSummary
@@ -619,7 +637,7 @@ class ReporterWorker(QRunnable):
                     start=seg["start"],
                     end=seg["end"],
                     text=seg["text"],
-                    speaker=seg.get("speaker", "Unknown")
+                    speaker=seg.get("speaker") or "Unknown"
                 )
                 for seg in transcript_data["segments"]
             ]
@@ -633,7 +651,16 @@ class ReporterWorker(QRunnable):
             
             # Load summary from markdown (parse back to MeetingSummary)
             summary_md = self.session_dir / "summary.md"
-            summary = self._parse_summary_markdown(summary_md)
+            if summary_md.exists():
+                summary = self._parse_summary_markdown(summary_md)
+            else:
+                logger.debug("No summary.md found (summarization skipped), using empty summary")
+                summary = MeetingSummary(
+                    summary="(Summarization was not enabled for this session)",
+                    key_topics=[],
+                    action_items=[],
+                    decisions=[],
+                )
             
             self.event_bus.emit_stage_progress("Generating reports", 60)
             
@@ -649,11 +676,13 @@ class ReporterWorker(QRunnable):
             )
             
             self.event_bus.emit_stage_progress("Generating reports", 100)
-            
+            logger.debug(f"Report generation finished: {list(reports.keys())}")
             # Emit completion with report paths
             self.event_bus.emit_reports_ready(reports)
         
         except Exception as e:
+            logger = AppLogger.get_logger("ui.workers.reporter")
+            logger.error(f"ReporterWorker failed: {e}")
             self.event_bus.emit_session_error(f"Report generation failed: {str(e)}", "reporting")
     
     def _parse_summary_markdown(self, summary_path: Path):

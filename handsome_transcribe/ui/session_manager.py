@@ -21,6 +21,7 @@ from .workers import (
     DiarizerWorker, SummarizerWorker, ReporterWorker
 )
 from .exceptions import SessionError, ActiveSessionError
+from .logger import AppLogger
 from .constants import (
     SESSIONS_DIR, REPORTS_DIR, SESSION_DIR_FORMAT,
     RECORDING_FILENAME, TRANSCRIPT_FILENAME, SUMMARY_FILENAME,
@@ -58,6 +59,7 @@ class SessionManager(QObject):
             speaker_manager: Speaker manager instance
         """
         super().__init__()
+        self._logger = AppLogger.get_logger("ui.session_manager")
         
         self.config = config
         self.event_bus = event_bus
@@ -79,6 +81,11 @@ class SessionManager(QObject):
         self._autosave_timer = QTimer(self)
         self._autosave_timer.timeout.connect(self._auto_save_progress)
         self._autosave_timer.setInterval(AUTO_SAVE_INTERVAL_MS)  # 2 minutes
+        
+        # Periodic partial transcription timer (live preview every 30 s)
+        self._partial_transcription_timer = QTimer(self)
+        self._partial_transcription_timer.timeout.connect(self._periodic_partial_transcription)
+        self._partial_transcription_timer.setInterval(30_000)  # 30 seconds
         
         # Track current speaker for change detection
         self._current_speaker_id: Optional[int] = None
@@ -162,6 +169,9 @@ class SessionManager(QObject):
         # Start auto-save timer
         self._start_autosave_timer()
         
+        # Start periodic partial transcription (live preview)
+        self._partial_transcription_timer.start()
+        
         # Emit event as string payload expected by EventBus
         self.event_bus.emit_session_started(str(session_data.id))
         
@@ -185,6 +195,9 @@ class SessionManager(QObject):
         
         # Pause recorder
         self.recorder_worker.pause()
+        
+        # Stop periodic partial transcription during pause
+        self._partial_transcription_timer.stop()
         
         # Save partial audio
         partial_audio_path = self._save_partial_audio()
@@ -213,6 +226,9 @@ class SessionManager(QObject):
         
         # Resume recorder
         self.recorder_worker.resume()
+        
+        # Restart periodic partial transcription
+        self._partial_transcription_timer.start()
         
         # Transition state
         self._transition_state(SessionState.RECORDING)
@@ -250,6 +266,9 @@ class SessionManager(QObject):
         # Stop auto-save timer
         self._stop_autosave_timer()
         
+        # Stop periodic partial transcription
+        self._partial_transcription_timer.stop()
+        
         # Start transcription
         self._start_transcription()
     
@@ -267,6 +286,7 @@ class SessionManager(QObject):
             self.recorder_worker.stop()
         
         self._stop_autosave_timer()
+        self._partial_transcription_timer.stop()
         
         if self.current_session:
             self.database.update_session(
@@ -316,6 +336,7 @@ class SessionManager(QObject):
         
         old_state = self.current_state
         self.current_state = new_state
+        self._logger.debug(f"State transition: {old_state.value} -> {new_state.value}")
         
         # Update database if session exists
         if self.current_session:
@@ -425,6 +446,14 @@ class SessionManager(QObject):
         if self._autosave_timer.isActive():
             self._autosave_timer.stop()
     
+    def _periodic_partial_transcription(self):
+        """Save partial audio and run transcription for live preview during recording."""
+        if self.current_state != SessionState.RECORDING:
+            return
+        partial_audio_path = self._save_partial_audio()
+        if partial_audio_path:
+            self._start_partial_transcription(partial_audio_path)
+    
     def _start_transcription(self):
         """Start transcription worker after recording completes."""
         if not self.current_session:
@@ -436,12 +465,18 @@ class SessionManager(QObject):
             event_bus=self.event_bus,
             audio_path=self.current_session.recording_path,
             output_path=self.current_session.transcript_path,
-            model_name=self.config.modelo_whisper
+            model_name=self.config.modelo_whisper,
+            language=self.config.idioma_transcripcion
         )
         
         # Connect transcription complete -> next stage
         self.event_bus.transcription_complete.connect(self._on_transcription_complete, Qt.ConnectionType.QueuedConnection)
+        self.event_bus.transcription_error.connect(
+            self._on_pipeline_error, Qt.ConnectionType.QueuedConnection
+        )
+        self._logger.debug("Connected transcription_error -> _on_pipeline_error")
         
+        self._logger.debug(f"Starting transcription worker: audio={self.current_session.recording_path}, model={self.config.modelo_whisper}, lang={self.config.idioma_transcripcion}")
         self._thread_pool.start(self.transcriber_worker)
 
     def _start_partial_transcription(self, partial_audio_path: Path):
@@ -457,6 +492,7 @@ class SessionManager(QObject):
             audio_path=partial_audio_path,
             output_path=output_path,
             model_name=self.config.modelo_whisper,
+            language=self.config.idioma_transcripcion,
             emit_progress=False,
             emit_complete=False
         )
@@ -466,10 +502,12 @@ class SessionManager(QObject):
         """Start diarization worker if enabled."""
         if not self.current_session or not self.config.habilitar_diarizacion:
             # Skip to next stage
+            self._logger.debug("Diarization skipped (disabled or no session)")
             self._start_summarization()
             return
         
         if not self.config.hf_token:
+            self._logger.debug("Diarization skipped (disabled or no session)")
             self.event_bus.emit_session_error(
                 "Diarization enabled but HF_TOKEN not provided",
                 "diarization"
@@ -487,13 +525,19 @@ class SessionManager(QObject):
         
         # Connect diarization complete -> next stage
         self.event_bus.speaker_update_ready.connect(self._on_diarization_complete, Qt.ConnectionType.QueuedConnection)
+        self.event_bus.session_error.connect(
+            self._on_diarization_error_wrapper, Qt.ConnectionType.QueuedConnection
+        )
+        self._logger.debug("Connected session_error -> _on_diarization_error_wrapper")
         
+        self._logger.debug("Starting diarization worker")
         self._thread_pool.start(diarizer_worker)
     
     def _start_summarization(self):
         """Start summarization worker if enabled."""
         if not self.current_session or not self.config.habilitar_resumen:
             # Skip to reporting
+            self._logger.debug("Summarization skipped (disabled)")
             self._start_reporting()
             return
         
@@ -508,7 +552,12 @@ class SessionManager(QObject):
         
         # Connect summarization complete -> next stage
         self.event_bus.summarization_complete.connect(self._on_summarization_complete, Qt.ConnectionType.QueuedConnection)
+        self.event_bus.session_error.connect(
+            self._on_summarization_error_wrapper, Qt.ConnectionType.QueuedConnection
+        )
+        self._logger.debug("Connected session_error -> _on_summarization_error_wrapper")
         
+        self._logger.debug("Starting summarization worker")
         self._thread_pool.start(summarizer_worker)
     
     def _start_reporting(self):
@@ -525,7 +574,12 @@ class SessionManager(QObject):
         
         # Connect reports ready -> completion
         self.event_bus.reports_ready.connect(self._on_reports_ready, Qt.ConnectionType.QueuedConnection)
+        self.event_bus.session_error.connect(
+            self._on_reporting_error_wrapper, Qt.ConnectionType.QueuedConnection
+        )
+        self._logger.debug("Connected session_error -> _on_reporting_error_wrapper")
         
+        self._logger.debug("Starting reporting worker")
         self._thread_pool.start(reporter_worker)
     
     def _complete_session(self):
@@ -534,6 +588,7 @@ class SessionManager(QObject):
             return
         
         self._transition_state(SessionState.COMPLETED)
+        self._logger.debug("Session completed successfully")
         
         # Prepare results
         results = {
@@ -563,11 +618,16 @@ class SessionManager(QObject):
         Args:
             transcript: Whisper transcript result
         """
+        self._logger.debug("Transcription complete callback fired")
         # Disconnect signal to avoid duplicate calls
         try:
             self.event_bus.transcription_complete.disconnect(self._on_transcription_complete)
         except RuntimeError:
             pass  # Already disconnected
+        try:
+            self.event_bus.transcription_error.disconnect(self._on_pipeline_error)
+        except RuntimeError:
+            pass
         
         # Move to next stage: diarization if enabled, else summarization
         self._start_diarization()
@@ -579,9 +639,14 @@ class SessionManager(QObject):
         Args:
             speaker_map: Speaker identification map
         """
+        self._logger.debug("Diarization complete callback fired")
         # Disconnect signal
         try:
             self.event_bus.speaker_update_ready.disconnect(self._on_diarization_complete)
+        except RuntimeError:
+            pass
+        try:
+            self.event_bus.session_error.disconnect(self._on_diarization_error_wrapper)
         except RuntimeError:
             pass
         
@@ -595,9 +660,14 @@ class SessionManager(QObject):
         Args:
             summary: MeetingSummary object
         """
+        self._logger.debug("Summarization complete callback fired")
         # Disconnect signal
         try:
             self.event_bus.summarization_complete.disconnect(self._on_summarization_complete)
+        except RuntimeError:
+            pass
+        try:
+            self.event_bus.session_error.disconnect(self._on_summarization_error_wrapper)
         except RuntimeError:
             pass
         
@@ -611,11 +681,94 @@ class SessionManager(QObject):
         Args:
             reports: Dict of generated report paths
         """
+        self._logger.debug("Reports ready callback fired")
         # Disconnect signal
         try:
             self.event_bus.reports_ready.disconnect(self._on_reports_ready)
         except RuntimeError:
             pass
+        try:
+            self.event_bus.session_error.disconnect(self._on_reporting_error_wrapper)
+        except RuntimeError:
+            pass
         
         # Complete session
         self._complete_session()
+
+    # -------------------------------------------------------------------------
+    # Error handler methods
+    # -------------------------------------------------------------------------
+
+    def _on_pipeline_error(self, error_msg: str):
+        """Handle pipeline error from transcription_error signal (single arg)."""
+        self._logger.error(f"Pipeline error: {error_msg}")
+        # Disconnect error signal
+        try:
+            self.event_bus.transcription_error.disconnect(self._on_pipeline_error)
+        except RuntimeError:
+            pass
+        # Also disconnect success signal to prevent stale callbacks
+        try:
+            self.event_bus.transcription_complete.disconnect(self._on_transcription_complete)
+        except RuntimeError:
+            pass
+        self._handle_pipeline_failure(error_msg, "transcription")
+
+    def _on_diarization_error_wrapper(self, error_title: str, error_stage: str):
+        """Handle session_error during diarization stage."""
+        if error_stage != "diarization":
+            self._logger.debug(f"Ignoring session_error for stage '{error_stage}' during diarization")
+            return
+        self._logger.error(f"Diarization error: {error_title}")
+        try:
+            self.event_bus.session_error.disconnect(self._on_diarization_error_wrapper)
+        except RuntimeError:
+            pass
+        try:
+            self.event_bus.speaker_update_ready.disconnect(self._on_diarization_complete)
+        except RuntimeError:
+            pass
+        self._handle_pipeline_failure(error_title, "diarization")
+
+    def _on_summarization_error_wrapper(self, error_title: str, error_stage: str):
+        """Handle session_error during summarization stage."""
+        if error_stage != "summarization":
+            self._logger.debug(f"Ignoring session_error for stage '{error_stage}' during summarization")
+            return
+        self._logger.error(f"Summarization error: {error_title}")
+        try:
+            self.event_bus.session_error.disconnect(self._on_summarization_error_wrapper)
+        except RuntimeError:
+            pass
+        try:
+            self.event_bus.summarization_complete.disconnect(self._on_summarization_complete)
+        except RuntimeError:
+            pass
+        self._handle_pipeline_failure(error_title, "summarization")
+
+    def _on_reporting_error_wrapper(self, error_title: str, error_stage: str):
+        """Handle session_error during reporting stage."""
+        if error_stage != "reporting":
+            self._logger.debug(f"Ignoring session_error for stage '{error_stage}' during reporting")
+            return
+        self._logger.error(f"Reporting error: {error_title}")
+        try:
+            self.event_bus.session_error.disconnect(self._on_reporting_error_wrapper)
+        except RuntimeError:
+            pass
+        try:
+            self.event_bus.reports_ready.disconnect(self._on_reports_ready)
+        except RuntimeError:
+            pass
+        self._handle_pipeline_failure(error_title, "reporting")
+
+    def _handle_pipeline_failure(self, error_msg: str, stage: str):
+        """Transition to ERROR state and notify UI."""
+        self._logger.error(f"Pipeline failure at '{stage}': {error_msg}")
+        try:
+            self._transition_state(SessionState.ERROR)
+        except SessionError:
+            self._logger.warning(f"Could not transition to ERROR from {self.current_state.value}")
+            self.current_state = SessionState.ERROR
+        self._stop_autosave_timer()
+        self.event_bus.emit_session_error(f"Pipeline error: {stage}", error_msg)

@@ -66,6 +66,27 @@ class TestTranscriberWorker:
         assert worker.audio_path == Path("test.wav")
         assert worker.model_name == "base"
 
+    def test_create_transcriber_worker_with_language(self, event_bus):
+        """Test creating a TranscriberWorker with explicit language."""
+        worker = TranscriberWorker(
+            event_bus=event_bus,
+            audio_path=Path("test.wav"),
+            output_path=Path("transcript.txt"),
+            model_name="base",
+            language="es"
+        )
+        assert worker.language == "es"
+
+    def test_create_transcriber_worker_language_none(self, event_bus):
+        """Test creating a TranscriberWorker without language defaults to None."""
+        worker = TranscriberWorker(
+            event_bus=event_bus,
+            audio_path=Path("test.wav"),
+            output_path=Path("transcript.txt"),
+            model_name="base"
+        )
+        assert worker.language is None
+
 
 class TestSpeakerEmbeddingWorker:
     """Tests for SpeakerEmbeddingWorker."""

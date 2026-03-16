@@ -148,3 +148,59 @@ class TestReportGenerator:
         content = saved["markdown"].read_text(encoding="utf-8")
         assert "Decisions" in content
         assert "Move release to March" in content
+
+    # Regression tests for: reporter-none-segment-join
+    # Root cause: getattr(seg, 'speaker_id', 'Unknown') emits None when speaker_id
+    # is a declared Optional[int] = None dataclass field. None then passes through
+    # dict.get("speaker", "Unknown") and causes TypeError in str.join(report.speakers).
+
+    def test_generate_report_with_none_speaker(
+        self,
+        tmp_path: Path,
+        sample_summary: MeetingSummary,
+    ) -> None:
+        transcript = Transcript(
+            audio_file="test.wav",
+            language="es",
+            segments=[
+                TranscriptSegment(start=0.0, end=5.0, text="Hola.", speaker=None),
+            ],
+        )
+        gen = ReportGenerator(output_dir=tmp_path)
+        saved = gen.generate(
+            transcript,
+            sample_summary,
+            title="None Speaker Meeting",
+            formats=["markdown", "json"],
+        )
+        assert "markdown" in saved
+        assert "json" in saved
+        content = saved["markdown"].read_text(encoding="utf-8")
+        assert "Unknown" in content
+
+    def test_generate_report_with_mixed_speakers(
+        self,
+        tmp_path: Path,
+        sample_summary: MeetingSummary,
+    ) -> None:
+        transcript = Transcript(
+            audio_file="test.wav",
+            language="es",
+            segments=[
+                TranscriptSegment(start=0.0, end=3.0, text="Hola.", speaker=None),
+                TranscriptSegment(start=3.0, end=6.0, text="Bien.", speaker="Unknown"),
+                TranscriptSegment(start=6.0, end=9.0, text="Gracias.", speaker="SPEAKER_01"),
+            ],
+        )
+        gen = ReportGenerator(output_dir=tmp_path)
+        saved = gen.generate(
+            transcript,
+            sample_summary,
+            title="Mixed Speaker Meeting",
+            formats=["json"],
+        )
+        data = json.loads(saved["json"].read_text(encoding="utf-8"))
+        speakers = data["speakers"]
+        assert "SPEAKER_01" in speakers
+        assert None not in speakers
+        assert "Unknown" not in speakers

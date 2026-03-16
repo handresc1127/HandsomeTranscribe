@@ -34,6 +34,7 @@ class SessionConfig:
     dispositivo_audio: Optional[str] = None
     hf_token: Optional[str] = None
     session_context: Optional[str] = None  # Optional context text (markdown/plain text)
+    idioma_transcripcion: Optional[str] = None  # Optional language code (e.g. "es", "en")
     
     def to_dict(self) -> dict:
         """Convert configuration to dictionary."""

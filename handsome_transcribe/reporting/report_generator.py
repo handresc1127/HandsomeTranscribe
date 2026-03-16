@@ -88,7 +88,8 @@ class ReportGenerator:
 
         date_str = datetime.now().strftime("%Y-%m-%d %H:%M")
         speakers = sorted(
-            {seg.speaker for seg in transcript.segments if seg.speaker != "Unknown"}
+            {seg.speaker for seg in transcript.segments
+             if seg.speaker is not None and seg.speaker != "Unknown"}
         ) or ["Unknown"]
 
         report = MeetingReport(

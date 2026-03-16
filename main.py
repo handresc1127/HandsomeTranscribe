@@ -79,6 +79,12 @@ def transcribe(
         "-m",
         help="Whisper model size: tiny | base | small | medium | large.",
     ),
+    language: str | None = typer.Option(
+        None,
+        "--language",
+        "-l",
+        help="BCP-47 language code to force (e.g. 'es', 'en'). Auto-detects if omitted.",
+    ),
     no_save: bool = typer.Option(
         False,
         "--no-save",
@@ -88,7 +94,7 @@ def transcribe(
     """Transcribe an audio file using local Whisper."""
     from handsome_transcribe.transcription.whisper_transcriber import WhisperTranscriber  # noqa: PLC0415
 
-    transcriber = WhisperTranscriber(model_name=model)
+    transcriber = WhisperTranscriber(model_name=model, language=language)
     transcript = transcriber.transcribe(audio_file, save=not no_save)
 
     table = Table(title="Transcript Preview", show_lines=True)

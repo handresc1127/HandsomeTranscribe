@@ -48,6 +48,9 @@ class ConfigManager:
         habilitar_resumen = self.settings.value("features/summarization", False, type=bool)
         dispositivo_audio = self.settings.value("audio/device", None)
         
+        # Load language setting (empty string treated as None = auto-detect)
+        idioma_transcripcion = self.settings.value("whisper/language", None) or None
+        
         # Load HF_TOKEN from environment (more secure than storing in settings)
         hf_token = os.getenv("HF_TOKEN") or self.settings.value("auth/hf_token", None)
         
@@ -60,7 +63,8 @@ class ConfigManager:
             habilitar_resumen=habilitar_resumen,
             dispositivo_audio=dispositivo_audio,
             hf_token=hf_token,
-            session_context=session_context
+            session_context=session_context,
+            idioma_transcripcion=idioma_transcripcion
         )
     
     def save_config(self, config: SessionConfig):
@@ -79,6 +83,12 @@ class ConfigManager:
         
         if config.dispositivo_audio:
             self.settings.setValue("audio/device", config.dispositivo_audio)
+        
+        # Save language setting (remove key when None to avoid stale values)
+        if config.idioma_transcripcion:
+            self.settings.setValue("whisper/language", config.idioma_transcripcion)
+        else:
+            self.settings.remove("whisper/language")
         
         # Do NOT save HF_TOKEN to settings (security)
         # Do NOT save session_context (session-specific)

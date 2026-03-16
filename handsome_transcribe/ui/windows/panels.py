@@ -29,6 +29,7 @@ from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from ..config_manager import ConfigManager
 from ..event_bus import EventBus
 from ..logger import get_logger
+from ..models import SpeakerProfile
 
 # Create logger for panels module
 logger = get_logger('ui.panels')
@@ -86,9 +87,18 @@ class ConfigPanel(QWidget):
         self.whisper_combo.setToolTip("Larger models are more accurate but slower")
         model_layout.addWidget(self.whisper_combo)
         
-        model_layout.addWidget(QLabel("Language: (optional, auto-detect if empty)"))
-        self.language_input = QLineEdit()
-        self.language_input.setPlaceholderText("e.g., es for Spanish, en for English (leave empty for auto-detect)")
+        model_layout.addWidget(QLabel("Language:"))
+        self.language_input = QComboBox()
+        self.language_input.setToolTip("Language for transcription. 'Auto-detect' lets Whisper guess (may fail on short clips)")
+        _languages = [
+            ("Spanish", "es"),
+            ("English", "en"),
+            ("Auto-detect", None),
+        ]
+        for display, code in _languages:
+            self.language_input.addItem(display, code)
+        # Default to Spanish
+        self.language_input.setCurrentIndex(0)
         model_layout.addWidget(self.language_input)
         
         model_group.setLayout(model_layout)
@@ -303,6 +313,12 @@ class ConfigPanel(QWidget):
             # Set session context
             if config.session_context:
                 self.context_text.setPlainText(config.session_context)
+            
+            # Set language
+            if config.idioma_transcripcion:
+                idx = self.language_input.findData(config.idioma_transcripcion)
+                if idx >= 0:
+                    self.language_input.setCurrentIndex(idx)
         
         except Exception as e:
             print(f"Error loading config: {e}")
@@ -331,7 +347,7 @@ class ConfigPanel(QWidget):
         )
         if reply == QMessageBox.Yes:
             self.whisper_combo.setCurrentText("base")
-            self.language_input.clear()
+            self.language_input.setCurrentIndex(0)  # Reset to Spanish
             self.diarization_check.setChecked(False)
             self.summarization_check.setChecked(False)
             self.context_text.clear()
@@ -356,7 +372,8 @@ class ConfigPanel(QWidget):
             habilitar_resumen=self.summarization_check.isChecked(),
             dispositivo_audio=self.device_combo.currentText(),
             hf_token=self.config_manager.load_config().hf_token,
-            session_context=self.context_text.toPlainText() or None
+            session_context=self.context_text.toPlainText() or None,
+            idioma_transcripcion=self.language_input.currentData()
         )
         
         # Validate
@@ -812,11 +829,25 @@ class InterlocutoresPanel(QWidget):
         self.speaker_list.clear()
         
         try:
-            # TODO: Load from database using speaker_manager
-            # For now, show placeholder
-            placeholder = QListWidgetItem("No speakers registered yet.\n\nSpeakers are automatically created during recording.")
-            self.speaker_list.addItem(placeholder)
-            self.speaker_count_label.setText("0")
+            speakers = self.speaker_manager.database.get_all_speakers()
+            if not speakers:
+                placeholder = QListWidgetItem("No speakers registered yet.\n\nClick 'Add Speaker' to create one.")
+                placeholder.setFlags(placeholder.flags() & ~Qt.ItemIsSelectable)
+                self.speaker_list.addItem(placeholder)
+                self.speaker_count_label.setText("0")
+                return
+
+            for speaker in speakers:
+                tags_str = f"  [{', '.join(speaker.tags)}]" if speaker.tags else ""
+                last_seen = speaker.last_seen.strftime("%Y-%m-%d") if speaker.last_seen else "Never"
+                item = QListWidgetItem(
+                    f"{speaker.name}{tags_str}\n"
+                    f"  Created: {speaker.created_at.strftime('%Y-%m-%d')}  |  Last seen: {last_seen}"
+                )
+                item.setData(Qt.UserRole, speaker.id)
+                self.speaker_list.addItem(item)
+
+            self.speaker_count_label.setText(str(len(speakers)))
         
         except Exception as e:
             error_item = QListWidgetItem(f"Error loading speakers: {str(e)}")
@@ -825,12 +856,11 @@ class InterlocutoresPanel(QWidget):
     @Slot()
     def _on_selection_changed(self):
         """Slot: selection in speaker list changed."""
-        has_selection = self.speaker_list.currentItem() is not None
-        # Don't enable if placeholder is selected
-        is_placeholder = has_selection and "No speakers" in self.speaker_list.currentItem().text()
+        current = self.speaker_list.currentItem()
+        has_real_item = current is not None and current.data(Qt.UserRole) is not None
         
-        self.edit_button.setEnabled(has_selection and not is_placeholder)
-        self.delete_button.setEnabled(has_selection and not is_placeholder)
+        self.edit_button.setEnabled(has_real_item)
+        self.delete_button.setEnabled(has_real_item)
     
     @Slot()
     def _on_add_speaker(self):
@@ -838,13 +868,12 @@ class InterlocutoresPanel(QWidget):
         dialog = AddSpeakerDialog(self)
         if dialog.exec():
             name, tags = dialog.get_data()
-            QMessageBox.information(
-                self,
-                "Speaker Added",
-                f"Speaker '{name}' added to library.\n\n"
-                f"This speaker will be automatically identified during recording\n"
-                f"if their voice embedding matches with >98% confidence."
-            )
+            try:
+                speaker = SpeakerProfile(id=0, name=name, tags=tags)
+                self.speaker_manager.database.create_speaker(speaker)
+            except Exception as e:
+                QMessageBox.warning(self, "Error", f"Could not create speaker: {e}")
+                return
             self._load_speakers()
     
     @Slot()
@@ -854,7 +883,25 @@ class InterlocutoresPanel(QWidget):
         if not current_item:
             return
         
-        QMessageBox.information(self, "Edit Speaker", "Edit speaker dialog - TBD")
+        speaker_id = current_item.data(Qt.UserRole)
+        if speaker_id is None:
+            return
+
+        dialog = AddSpeakerDialog(self)
+        dialog.setWindowTitle("Edit Speaker")
+        # Pre-populate from current item text (name is first line before tags)
+        current_name = current_item.text().split("\n")[0].split("  [")[0].strip()
+        dialog.name_input.setText(current_name)
+        if dialog.exec():
+            name, tags = dialog.get_data()
+            try:
+                self.speaker_manager.database.update_speaker(
+                    speaker_id, name=name, tags=tags
+                )
+            except Exception as e:
+                QMessageBox.warning(self, "Error", f"Could not update speaker: {e}")
+                return
+            self._load_speakers()
     
     @Slot()
     def _on_delete_speaker(self):
@@ -872,7 +919,13 @@ class InterlocutoresPanel(QWidget):
             QMessageBox.No
         )
         if reply == QMessageBox.Yes:
-            QMessageBox.information(self, "Deleted", "Speaker deleted - TBD")
+            speaker_id = current_item.data(Qt.UserRole)
+            if speaker_id is not None:
+                try:
+                    self.speaker_manager.database.delete_speaker(speaker_id)
+                except Exception as e:
+                    QMessageBox.warning(self, "Error", f"Could not delete speaker: {e}")
+                    return
             self._load_speakers()
 
 
@@ -1091,57 +1144,107 @@ class SessionHistoryPanel(QWidget):
         self.session_table.setRowCount(0)
         
         try:
-            # TODO: Query database for all sessions
-            # For now, show placeholder
-            placeholder_row = 0
-            self.session_table.insertRow(placeholder_row)
-            item = QTableWidgetItem("No sessions recorded yet.")
-            item.setFlags(item.flags() & ~Qt.ItemIsSelectable)
-            self.session_table.setItem(placeholder_row, 0, item)
-            
-            self.total_sessions_label.setText("0")
-            self.total_duration_label.setText("0h 0m")
+            sessions = self.database.get_all_sessions()
+
+            # Apply filter
+            filter_text = self.filter_combo.currentText()
+            if filter_text != "All":
+                sessions = [s for s in sessions if s.state.value.upper() == filter_text]
+
+            if not sessions:
+                self.session_table.insertRow(0)
+                item = QTableWidgetItem("No sessions found.")
+                item.setFlags(item.flags() & ~Qt.ItemIsSelectable)
+                self.session_table.setItem(0, 0, item)
+                self.total_sessions_label.setText("0")
+                self.total_duration_label.setText("0h 0m")
+                return
+
+            total_size = 0
+            for row_idx, session in enumerate(sessions):
+                self.session_table.insertRow(row_idx)
+
+                # Date
+                date_item = QTableWidgetItem(
+                    session.created_at.strftime("%Y-%m-%d %H:%M")
+                )
+                date_item.setData(Qt.UserRole, session.id)
+                date_item.setData(Qt.UserRole + 1, str(session.session_dir))
+                self.session_table.setItem(row_idx, 0, date_item)
+
+                # Duration — estimate from recording file size if available
+                dur_text = "—"
+                rec_path = session.recording_path
+                if rec_path and rec_path.exists():
+                    file_size = rec_path.stat().st_size
+                    # PCM-16 mono 16 kHz ≈ 32 KB/s
+                    secs = file_size / 32000
+                    mins = int(secs // 60)
+                    secs_r = int(secs % 60)
+                    dur_text = f"{mins}m {secs_r}s"
+                    total_size += file_size
+                self.session_table.setItem(row_idx, 1, QTableWidgetItem(dur_text))
+
+                # Speakers
+                self.session_table.setItem(row_idx, 2, QTableWidgetItem("—"))
+
+                # Status
+                self.session_table.setItem(
+                    row_idx, 3, QTableWidgetItem(session.state.value.capitalize())
+                )
+
+                # File size
+                size_text = "—"
+                if session.session_dir and session.session_dir.exists():
+                    dir_size = sum(
+                        f.stat().st_size
+                        for f in session.session_dir.rglob("*")
+                        if f.is_file()
+                    )
+                    if dir_size > 1_048_576:
+                        size_text = f"{dir_size / 1_048_576:.1f} MB"
+                    else:
+                        size_text = f"{dir_size / 1024:.0f} KB"
+                self.session_table.setItem(row_idx, 4, QTableWidgetItem(size_text))
+
+            self.total_sessions_label.setText(str(len(sessions)))
+            total_mb = total_size / 1_048_576
+            self.total_duration_label.setText(f"{total_mb:.1f} MB total audio")
         
         except Exception as e:
-            error_row = 0
-            self.session_table.insertRow(error_row)
+            self.session_table.insertRow(0)
             item = QTableWidgetItem(f"Error: {str(e)}")
-            self.session_table.setItem(error_row, 0, item)
+            self.session_table.setItem(0, 0, item)
     
     @Slot()
     def _on_selection_changed(self):
         """Slot: selection in table changed."""
-        has_selection = len(self.session_table.selectedIndexes()) > 0
-        # Don't enable if placeholder row is selected
-        if has_selection:
-            row = self.session_table.currentRow()
-            first_cell = self.session_table.item(row, 0)
-            is_placeholder = first_cell and ("No sessions" in first_cell.text() or "Error" in first_cell.text())
-            has_selection = not is_placeholder
-        
-        self.open_button.setEnabled(has_selection)
-        self.delete_button.setEnabled(has_selection)
+        row = self.session_table.currentRow()
+        has_real = (
+            row >= 0
+            and self.session_table.item(row, 0) is not None
+            and self.session_table.item(row, 0).data(Qt.UserRole) is not None
+        )
+        self.open_button.setEnabled(has_real)
+        self.delete_button.setEnabled(has_real)
     
     @Slot()
     def _on_filter_changed(self):
         """Slot: filter combo changed."""
-        # TODO: Implement filtering
         self._load_sessions()
     
     @Slot()
     def _on_open_session(self):
-        """Slot: open session button clicked."""
+        """Slot: open session button clicked — open session folder in file explorer."""
         row = self.session_table.currentRow()
         if row < 0:
             return
         
-        session_id = self.session_table.item(row, 0).text()
-        QMessageBox.information(
-            self,
-            "Open Session",
-            f"Open session {session_id} - TBD\n\n"
-            f"This will display the transcript, speakers, and summary."
-        )
+        session_dir = self.session_table.item(row, 0).data(Qt.UserRole + 1)
+        if session_dir and Path(session_dir).exists():
+            QDesktopServices.openUrl(QUrl.fromLocalFile(session_dir))
+        else:
+            QMessageBox.warning(self, "Not Found", "Session directory not found on disk.")
     
     @Slot()
     def _on_delete_session(self):
@@ -1150,18 +1253,30 @@ class SessionHistoryPanel(QWidget):
         if row < 0:
             return
         
-        session_id = self.session_table.item(row, 0).text()
+        session_id = self.session_table.item(row, 0).data(Qt.UserRole)
+        session_dir = self.session_table.item(row, 0).data(Qt.UserRole + 1)
         reply = QMessageBox.question(
             self,
             "Delete Session",
-            f"¿Eliminar la sesión de manera permanente?\n\n"
-            f"Se eliminarán la transcripción, audio, y reporte PDF.\n"
-            f"Esta acción no se puede deshacer.",
+            "¿Eliminar la sesión de manera permanente?\n\n"
+            "Se eliminarán la transcripción, audio, y reporte PDF.\n"
+            "Esta acción no se puede deshacer.",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No
         )
         if reply == QMessageBox.Yes:
-            QMessageBox.information(self, "Deleted", f"Session {session_id} deleted - TBD")
+            try:
+                if session_id is not None:
+                    self.database.delete_session(session_id)
+                # Remove session directory from disk
+                if session_dir:
+                    import shutil
+                    dir_path = Path(session_dir)
+                    if dir_path.exists():
+                        shutil.rmtree(dir_path)
+            except Exception as e:
+                QMessageBox.warning(self, "Error", f"Could not delete session: {e}")
+                return
             self._load_sessions()
     
     @Slot()
@@ -1317,12 +1432,27 @@ class ResultsPanel(QWidget):
         group.setLayout(layout)
         return group
     
-    @Slot(dict)
-    def _on_session_completed(self, results: Dict):
+    @Slot(str, str)
+    def _on_session_completed(self, session_info_json: str, result_json: str):
         """Slot: session processing completed, display results."""
-        logger.info(f"Session completed, displaying results for session {results.get('session_data', {}).get('id', 'N/A')}")
+        try:
+            result = json.loads(result_json)
+        except (json.JSONDecodeError, TypeError):
+            result = {}
+
+        session_dir = result.get("session_dir", "")
+        results = {
+            "session_data": {
+                "id": result.get("session_id", "N/A"),
+                "directorio_sesion": session_dir,
+                "recording_path": result.get("recording_path"),
+                "transcript_path": result.get("transcript_path"),
+                "summary_path": result.get("summary_path"),
+            },
+        }
+        logger.info(f"Session completed, displaying results for session {result.get('session_id', 'N/A')}")
         self._results = results
-        self._session_data = results.get("session_data")
+        self._session_data = results["session_data"]
         
         self._populate_results_tree(results)
         self.new_session_btn.setEnabled(True)
@@ -1346,19 +1476,25 @@ class ResultsPanel(QWidget):
         # Session details (children)
         details = [
             ("Session ID", str(session_data.get("id", "N/A"))),
-            ("Date", session_data.get("fecha_inicio", "N/A")),
-            ("Duration", f"{session_data.get('duracion_segundos', 0)} seconds"),
             ("Directory", str(session_dir))
         ]
+        # Estimate duration from recording file if available
+        audio_path_str = session_data.get("recording_path")
+        if audio_path_str:
+            rec = Path(audio_path_str)
+            if rec.exists():
+                secs = rec.stat().st_size / 32000  # PCM-16 mono 16 kHz
+                details.insert(1, ("Duration", f"{int(secs // 60)}m {int(secs % 60)}s"))
         for key, value in details:
             child = QTreeWidgetItem([key, value, ""])
             session_item.addChild(child)
         
-        # Add "Open Folder" button to directory row
+        # Add "Open Folder" button to directory row (last child)
         folder_btn = QPushButton("📁 Open Folder")
         folder_btn.clicked.connect(lambda: self._open_folder(session_dir))
         folder_btn.setMaximumWidth(120)
-        self.results_tree.setItemWidget(session_item.child(3), 2, folder_btn)
+        dir_child_idx = session_item.childCount() - 1
+        self.results_tree.setItemWidget(session_item.child(dir_child_idx), 2, folder_btn)
         
         session_item.setExpanded(True)
         

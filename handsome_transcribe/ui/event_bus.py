@@ -290,3 +290,30 @@ class EventBus(QObject):
             reports: Dictionary mapping format names to file paths
         """
         self.reports_ready.emit(reports)
+
+    def emit_diarization_error(self, error_msg: str):
+        """
+        Emit diarization error.
+        
+        Args:
+            error_msg: Error message
+        """
+        self.diarization_error.emit(error_msg)
+
+    def emit_summarization_error(self, error_msg: str):
+        """
+        Emit summarization error.
+        
+        Args:
+            error_msg: Error message
+        """
+        self.summarization_error.emit(error_msg)
+
+    def emit_report_generation_error(self, error_msg: str):
+        """
+        Emit report generation error.
+        
+        Args:
+            error_msg: Error message
+        """
+        self.report_generation_error.emit(error_msg)

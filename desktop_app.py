@@ -4,8 +4,11 @@ HandsomeTranscribe Desktop Application Entry Point
 Launches the PySide6 GUI for live transcription and speaker identification.
 """
 
+import os
+import shutil
 import sys
 import logging
+import tempfile
 from pathlib import Path
 
 from PySide6.QtWidgets import QApplication
@@ -33,9 +36,40 @@ def ensure_directories():
         raise
 
 
+def ensure_ffmpeg():
+    """Ensure ffmpeg is available on PATH.
+
+    Whisper calls ``ffmpeg`` as a subprocess to decode audio.  If the system
+    has no ``ffmpeg`` binary, fall back to the one bundled with the
+    ``imageio-ffmpeg`` package (if installed) by creating a shim directory.
+    """
+    if shutil.which("ffmpeg"):
+        return  # Already available
+    try:
+        import imageio_ffmpeg
+        src = imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        logger.warning(
+            "ffmpeg not found on PATH and imageio-ffmpeg not installed. "
+            "Whisper transcription will fail. Install ffmpeg or run: "
+            "pip install imageio-ffmpeg"
+        )
+        return
+
+    tmpdir = tempfile.mkdtemp(prefix="ht_ffmpeg_")
+    dst_name = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
+    dst = os.path.join(tmpdir, dst_name)
+    shutil.copy2(src, dst)
+    os.environ["PATH"] = tmpdir + os.pathsep + os.environ.get("PATH", "")
+    logger.info(f"ffmpeg shimmed from imageio-ffmpeg: {dst}")
+
+
 def main():
     """Main entry point for HandsomeTranscribe desktop app."""
     try:
+        # Ensure ffmpeg is available for Whisper
+        ensure_ffmpeg()
+
         # Ensure output directories
         ensure_directories()
         

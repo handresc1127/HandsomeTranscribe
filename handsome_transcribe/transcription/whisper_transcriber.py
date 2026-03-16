@@ -47,16 +47,25 @@ class Transcript:
 class WhisperTranscriber:
     """Transcribes audio files using local Whisper."""
 
-    def __init__(self, model_name: str = "base", output_dir: Path | None = None) -> None:
+    def __init__(
+        self,
+        model_name: str = "base",
+        output_dir: Path | None = None,
+        language: str | None = None,
+    ) -> None:
         """Initialise the transcriber.
 
         Args:
             model_name: Whisper model size (tiny/base/small/medium/large).
             output_dir: Directory where transcript JSON files are saved.
+            language: BCP-47 language code to force (e.g. ``'es'``, ``'en'``).
+                      When ``None`` Whisper auto-detects the language, which
+                      can fail on short or non-English clips.
         """
         self.model_name = model_name
         self.output_dir = output_dir or OUTPUTS_TRANSCRIPTS_DIR
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.language = language
         self._model = None  # Lazy-loaded
 
     # ------------------------------------------------------------------
@@ -83,7 +92,7 @@ class WhisperTranscriber:
         )
 
         model = self._get_model()
-        result = model.transcribe(str(audio_path), verbose=False)
+        result = model.transcribe(str(audio_path), verbose=False, language=self.language)
 
         segments = [
             TranscriptSegment(

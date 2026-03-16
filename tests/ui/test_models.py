@@ -76,6 +76,29 @@ class TestSessionConfig:
         assert restored.habilitar_resumen == original.habilitar_resumen
         assert restored.session_context == original.session_context
 
+    def test_session_config_language_default(self):
+        """Test SessionConfig defaults to None language (backward compat)."""
+        config = SessionConfig()
+        assert config.idioma_transcripcion is None
+
+    def test_session_config_language_set(self):
+        """Test SessionConfig stores language code."""
+        config = SessionConfig(idioma_transcripcion="es")
+        assert config.idioma_transcripcion == "es"
+
+    def test_session_config_from_dict_without_language(self):
+        """Test from_dict backward compatibility when language key is absent."""
+        data = {"modelo_whisper": "base", "habilitar_diarizacion": False,
+                "habilitar_resumen": False}
+        config = SessionConfig.from_dict(data)
+        assert config.idioma_transcripcion is None
+
+    def test_session_config_to_dict_with_language(self):
+        """Test to_dict includes language field."""
+        config = SessionConfig(idioma_transcripcion="es")
+        d = config.to_dict()
+        assert d["idioma_transcripcion"] == "es"
+
 
 class TestSessionData:
     """Tests for SessionData model."""

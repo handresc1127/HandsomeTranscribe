@@ -162,3 +162,25 @@ class TestConfigManager:
         assert "Device 1" in names
         assert "Device 2" in names
         assert "Device 3" not in names
+
+    def test_save_and_load_config_with_language(self, config_manager):
+        """Test saving and loading configuration with language."""
+        config = SessionConfig(
+            modelo_whisper="base",
+            habilitar_diarizacion=False,
+            habilitar_resumen=False,
+            idioma_transcripcion="es"
+        )
+        config_manager.save_config(config)
+        loaded = config_manager.load_config()
+        assert loaded.idioma_transcripcion == "es"
+
+    def test_save_and_load_config_without_language(self, config_manager):
+        """Test saving and loading configuration without language (None)."""
+        config = SessionConfig(
+            modelo_whisper="base",
+            idioma_transcripcion=None
+        )
+        config_manager.save_config(config)
+        loaded = config_manager.load_config()
+        assert loaded.idioma_transcripcion is None

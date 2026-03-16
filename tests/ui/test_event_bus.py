@@ -95,3 +95,34 @@ class TestEventBus:
         assert len(receiver.received_signals) == 2
         assert receiver.received_signals[0][0] == "recording_frame"
         assert receiver.received_signals[1][0] == "speaker_identified"
+
+
+class TestEventBusErrorEmitHelpers:
+    """Tests for the three new stage-specific error emit helpers."""
+
+    def test_emit_diarization_error(self, event_bus):
+        """emit_diarization_error emits the diarization_error signal."""
+        received = []
+        event_bus.diarization_error.connect(lambda msg: received.append(msg))
+
+        event_bus.emit_diarization_error("diarization failed")
+
+        assert received == ["diarization failed"]
+
+    def test_emit_summarization_error(self, event_bus):
+        """emit_summarization_error emits the summarization_error signal."""
+        received = []
+        event_bus.summarization_error.connect(lambda msg: received.append(msg))
+
+        event_bus.emit_summarization_error("summarization failed")
+
+        assert received == ["summarization failed"]
+
+    def test_emit_report_generation_error(self, event_bus):
+        """emit_report_generation_error emits the report_generation_error signal."""
+        received = []
+        event_bus.report_generation_error.connect(lambda msg: received.append(msg))
+
+        event_bus.emit_report_generation_error("report failed")
+
+        assert received == ["report failed"]
